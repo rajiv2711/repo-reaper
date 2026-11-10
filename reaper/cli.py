@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from reaper.discover import count_by_language, discover
+from reaper.graph import build, save
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -18,6 +19,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_map(args: argparse.Namespace) -> int:
+    graph = build(args.repo)
+    path = save(args.repo, graph)
+    print(f"{len(graph['files'])} files, {len(graph['nodes'])} nodes, "
+          f"{len(graph['refs'])} refs, {len(graph['edges'])} edges -> {path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="reaper", description="Map a code repository into a graph.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -25,6 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan", help="file counts per language")
     scan.add_argument("repo", type=Path)
     scan.set_defaults(func=cmd_scan)
+
+    map_ = sub.add_parser("map", help="full structural build -> .reaper/graph.json")
+    map_.add_argument("repo", type=Path)
+    map_.set_defaults(func=cmd_map)
 
     return parser
 

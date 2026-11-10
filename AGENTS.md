@@ -57,7 +57,7 @@ Typical use: map -> export -> enrich --pass files --model devstral-small-2:24b -
   Fixture tests/fixtures/sample_py/app/ (4-5 small files): module docstrings, `import os`, `from x import y`, a base class and a subclass, self.method() calls, cross-file function calls, one 
 function name defined in two files.
   Accept: `reaper scan tests/fixtures/sample_py` prints the python file count; pytest passes (tests copy the fixture to tmp_path first).
-- [ ] Phase 2: Python structure
+- [x] Phase 2: Python structure
   extract_py.extract(path, source, module) -> nodes + raw refs via `ast`. Classes, functions, methods with line, signature like "create(self, name)", first docstring line. Refs: imports (absolute 
 target + local alias; relative imports made absolute), calls (dotted callee text like "self.repo.save"), class bases. Syntax error -> file node only. `reaper map` writes graph.json.
   Accept: tests assert node counts by kind and specific refs on the fixture. Write expected values by hand from the fixture source BEFORE implementing.
