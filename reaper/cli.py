@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from reaper.discover import count_by_language, discover
-from reaper.graph import build, save
+from reaper.graph import build, save, update
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -19,11 +19,23 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _totals(graph: dict) -> str:
+    return (f"{len(graph['files'])} files, {len(graph['nodes'])} nodes, "
+            f"{len(graph['refs'])} refs, {len(graph['edges'])} edges")
+
+
 def cmd_map(args: argparse.Namespace) -> int:
     graph = build(args.repo)
     path = save(args.repo, graph)
-    print(f"{len(graph['files'])} files, {len(graph['nodes'])} nodes, "
-          f"{len(graph['refs'])} refs, {len(graph['edges'])} edges -> {path}")
+    print(f"{_totals(graph)} -> {path}")
+    return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    graph, changes = update(args.repo)
+    path = save(args.repo, graph)
+    counts = ", ".join(f"{len(paths)} {kind}" for kind, paths in changes.items())
+    print(f"{counts}\n{_totals(graph)} -> {path}")
     return 0
 
 
@@ -38,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
     map_ = sub.add_parser("map", help="full structural build -> .reaper/graph.json")
     map_.add_argument("repo", type=Path)
     map_.set_defaults(func=cmd_map)
+
+    upd = sub.add_parser("update", help="incremental structural update of .reaper/graph.json")
+    upd.add_argument("repo", type=Path)
+    upd.set_defaults(func=cmd_update)
 
     return parser
 

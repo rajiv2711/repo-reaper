@@ -3,12 +3,17 @@
 graph = {meta: {version, generated_at}, files, nodes, refs, edges}
 `files` lists every discovered file (its sha256 drives incremental updates);
 only files whose language has an extractor (Python so far) produce nodes and refs.
+
+build() extracts every file; update() reuses the nodes and refs of files whose sha256
+is unchanged since the saved graph.json and re-extracts the rest. Both then rebuild all
+edges with resolve(), so an update gives the same graph as a full build.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,15 +44,51 @@ def extract_file(root: Path, rel: str, lang: str) -> tuple[list[dict], list[dict
 
 def build(root: str | os.PathLike) -> dict:
     """Full structural build: discover every file, extract each one, resolve edges."""
+    return _assemble(root, None)[0]
+
+
+def update(root: str | os.PathLike) -> tuple[dict, dict]:
+    """Incremental build against the saved graph.json: (graph, changes).
+
+    changes = {added, changed, deleted, unchanged}, each a sorted list of paths. Unchanged
+    files keep their nodes and refs; added/changed files are re-extracted; deleted files drop
+    out; then resolve() rebuilds every edge. No graph.json, or one with another format
+    version, means a full build (every file "added"). The caller saves the graph.
+    """
+    try:
+        previous = load(root)
+    except FileNotFoundError:
+        previous = None
+    if previous is not None and previous.get("meta", {}).get("version") != VERSION:
+        previous = None
+    return _assemble(root, previous)
+
+
+def _assemble(root: str | os.PathLike, previous: dict | None) -> tuple[dict, dict]:
     root = Path(root).resolve()
     files = discover(root)
+    old_files = previous["files"] if previous else {}
+    old_nodes, old_refs = defaultdict(list), defaultdict(list)
+    for n in previous["nodes"] if previous else []:
+        old_nodes[n["file"]].append(n)  # external nodes (file None) are never reused: resolve rebuilds them
+    for r in previous["refs"] if previous else []:
+        old_refs[r["file"]].append(r)
+
+    changes = {"added": [], "changed": [], "deleted": sorted(set(old_files) - set(files)),
+               "unchanged": []}
     nodes, refs = [], []
-    for rel, info in files.items():
-        n, r = extract_file(root, rel, info["lang"])
+    for rel, info in files.items():  # discover order (sorted), same as a full build
+        old = old_files.get(rel)
+        if old is not None and old["sha256"] == info["sha256"]:
+            changes["unchanged"].append(rel)
+            n, r = old_nodes[rel], old_refs[rel]
+        else:
+            changes["added" if old is None else "changed"].append(rel)
+            n, r = extract_file(root, rel, info["lang"])
         nodes.extend(n)
         refs.extend(r)
     nodes, edges = resolve(nodes, refs)
-    return new_graph(files, nodes, refs, edges)
+    return new_graph(files, nodes, refs, edges), changes
 
 
 def save(root: str | os.PathLike, graph: dict) -> Path:

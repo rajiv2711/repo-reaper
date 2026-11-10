@@ -1,30 +1,28 @@
 # HANDOFF
-Phase 3 | status: done
+Phase 4 | status: done
 
 ## Done this session
-- tests/test_resolve.py written FIRST: every non-contains fixture edge by hand (8 imports, 1 inherits, 12 calls,
-  each with confidence), 18 contains, ext nodes, idempotency/order independence, plus 2 mini repos (re-exports,
-  star imports, nested scopes, grandparent methods, external-alias stop, AMBIGUOUS, >5 candidates).
-- reaper/resolve.py: resolve(nodes, refs) -> (nodes, edges). Drops incoming external nodes and rebuilds them
-  (ext:<top>, file/line/signature/doc null), so it is idempotent. Edges deduped per (src, dst, kind) keeping the
-  strongest confidence, sorted by (kind, src, dst) -> independent of file order. graph.build() now calls it.
-- Rule details beyond the AGENTS.md wording (all documented in the resolve.py docstring):
-  super().x -> base method INFERRED, else no edge; self.x not on class/bases -> falls through to rules 2-5;
-  aliases follow re-exports (pkg/__init__ `from .core import X`) and `from m import *` (max 5 hops);
-  `import a.b` also binds `a`; alias match ignores a trailing "()" (Path().resolve -> pathlib, external);
-  rule 5: bare f() matches only top-level functions/classes, dotted x.f() only methods;
-  inherits via alias / same-file scope / star import; base outside the repo -> no edge.
-- tests/test_graph.py: Phase 2 counts 23 -> 25 nodes (spec-mandated ext:json, ext:os), now also asserts edges.
-- Robustness: CPython stdlib, 2936 files -> 129k edges in 4.4s, 0 dangling edges, no duplicate ids.
+- tests/test_update.py written FIRST (7 tests): mutation = edit app/utils.py (drop `import os` + data_dir, add
+  slugify), delete app/repository.py, add app/store.py. Hand-written: changes dict, node/ref/edge counts, every
+  non-contains edge after the mutation (MUTATED_EDGES), which files get re-extracted (spy on extract_file).
+- reaper/graph.py: update(root) -> (graph, changes); changes = {added, changed, deleted, unchanged}, sorted path
+  lists. build() and update() share _assemble(root, previous): unchanged sha256 -> reuse old nodes/refs (grouped
+  by "file"; ext nodes rebuilt by resolve), else re-extract; then resolve(). Same file order as build, so
+  update == full build except meta.generated_at (tested). No graph.json or other meta.version -> full build.
+  update() does not save; the caller does (like build).
+- reaper/cli.py: `reaper update <repo>` prints "1 added, 1 changed, 1 deleted, 4 unchanged" + totals line.
+- Mutation check: making update ignore sha256 fails 4 of the 7 tests.
+- Real repo: CPython stdlib copy (2936 files): map 6.6s, no-change update 3.6s; edit+delete+add -> update ==
+  full build.
 
 ## Exact next step
-Phase 4: write tests/test_update.py FIRST, then graph.update(root) -> {added, changed, deleted, unchanged} and
-`reaper update` in cli.py. Keep nodes/refs of unchanged files (match on node["file"] / ref["file"]; external
-nodes have file null and are rebuilt by resolve), re-extract added/changed, then nodes, edges = resolve(...).
-Hints: missing graph.json -> full build; "identical graph" test should ignore meta.generated_at.
+Phase 5: write tests first for TREE.txt, SUMMARY.md, graph.html, `reaper query` on the fixture, then
+reaper/outputs.py + `reaper export` / `reaper query` in cli.py.
 
-## Blockers: none (AGENTS.md Phase 3 lists "(3) same-file name" twice; treated as one rule)
+## Blockers: none
+Note: an import of a deleted module resolves to its longest existing prefix (`from .repository import X`
+-> app/__init__.py) per the Phase 3 rule; kept as-is, asserted in test_update.py.
 
 ## Verify
-conda run -n repo-reaper pytest -q     -> 50 passed
-conda run -n repo-reaper reaper map .  -> 25 files, 144 nodes, 475 refs, 294 edges -> .reaper/graph.json
+conda run -n repo-reaper pytest -q        -> 57 passed
+conda run -n repo-reaper reaper update .  -> 0 added, 0 changed, 0 deleted, 26 unchanged (161 nodes, 353 edges)

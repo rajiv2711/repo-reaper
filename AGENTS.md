@@ -71,7 +71,7 @@ file. calls, in order:
   (4) builtins -> no edge
   (5) else match by last name part: 1 candidate INFERRED, 2-5 AMBIGUOUS (one edge each), otherwise no edge
   Accept: a test lists every expected non-contains edge of the fixture with its confidence.
-- [ ] Phase 4: Incremental update
+- [x] Phase 4: Incremental update
   `reaper update`: compare sha256s; re-extract added/changed, drop deleted, skip unchanged, then resolve. Return {added, changed, deleted, unchanged}.
   Accept: a no-change run gives an identical graph; editing one file, deleting one and adding one gives correct counts and edges.
 - [ ] Phase 5: Outputs + query
