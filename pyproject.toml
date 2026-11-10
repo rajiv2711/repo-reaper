@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repo-reaper"
+version = "0.1.0"
+description = "Map a code repository into a structural + semantic graph."
+requires-python = ">=3.11"
+dependencies = ["networkx"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+reaper = "reaper.cli:main"
+
+[tool.setuptools]
+packages = ["reaper"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
