@@ -284,6 +284,7 @@ def test_cli_failures_exit_nonzero(mapped, monkeypatch, capsys):
     assert "cannot reach Ollama" in capsys.readouterr().err
 
 
-def test_cli_later_passes_not_ready(mapped, capsys):
-    assert main(["enrich", str(mapped), "--pass", "groups", "--dry-run"]) == 1
-    assert "not implemented" in capsys.readouterr().err
+def test_cli_architecture_needs_groups_pass(mapped, capsys):
+    # Phase 6 placeholder ("not implemented") replaced: Phase 7 implements groups/architecture
+    assert main(["enrich", str(mapped), "--pass", "architecture", "--dry-run"]) == 1
+    assert "--pass groups" in capsys.readouterr().err

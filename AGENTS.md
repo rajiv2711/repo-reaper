@@ -83,7 +83,7 @@ file. calls, in order:
 per file = TREE outline + source (whole if <= 300 lines, else first 150) -> {summary (max 2 sentences), role}. Cache key = sha256(model + prompt version + input), stored in semantic.json. --limit 
 picks most-connected files first. --dry-run prints call count and approx tokens (chars/4).
   Accept: tests mock llm (no real Ollama); a second run makes 0 calls.
-- [ ] Phase 7: Semantic pass, groups + architecture (full model)
+- [x] Phase 7: Semantic pass, groups + architecture (full model)
   Groups = networkx Louvain communities (seed=42) on the file graph. groups pass: per group, input = member paths + file summaries (cap 12k chars) -> {name, summary}. architecture pass: input = 
 group summaries + cross-group edge counts + most-connected nodes -> {overview, patterns: [{name, explanation, evidence: [node ids]}], decisions: [...]}. Drop evidence ids not in graph.json. Write 
 ARCHITECTURE.md marked "LLM-generated".

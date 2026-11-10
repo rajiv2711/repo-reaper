@@ -73,26 +73,18 @@ def cmd_query(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_enrich(args: argparse.Namespace) -> int:
-    graph = _load_or_complain(args.repo)
-    if graph is None:
-        return 1
-    if args.pass_name != "files":
-        print(f"--pass {args.pass_name} is not implemented yet (Phase 7)", file=sys.stderr)
-        return 1
-    model = args.model or enrich.DEFAULT_MODELS[args.pass_name]
-    try:
-        report = enrich.run_files(args.repo, graph, model=model, limit=args.limit,
-                                  dry_run=args.dry_run, progress=print)
-    except llm.LLMError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
+def _calls(n: int) -> str:
+    return f"{n} call{'s' * (n != 1)}"
+
+
+def _enrich_files(args: argparse.Namespace, graph: dict, model: str) -> int:
+    report = enrich.run_files(args.repo, graph, model=model, limit=args.limit,
+                              dry_run=args.dry_run, progress=print)
     for path, reason in report["failed"].items():
         if path not in report["todo"]:  # failed before any call (unreadable file)
             print(f"{path}: FAILED {reason}")
     if args.dry_run:
-        calls = len(report["todo"])
-        print(f"files pass, {model}, dry run: {calls} call{'s' * (calls != 1)} "
+        print(f"files pass, {model}, dry run: {_calls(len(report['todo']))} "
               f"({report['cached']} cached), ~{report['tokens']} input tokens, "
               f"largest call ~{report['max_tokens']} tokens")
         return 0
@@ -100,6 +92,54 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     print(f"files pass, {model}: {len(report['called'])} called, {report['cached']} cached, "
           f"{len(report['failed'])} failed -> {path}")
     return 1 if report["failed"] else 0
+
+
+def _enrich_groups(args: argparse.Namespace, graph: dict, model: str) -> int:
+    report = enrich.run_groups(args.repo, graph, model=model, limit=args.limit,
+                               dry_run=args.dry_run, progress=print)
+    missing = len(report["missing_summaries"])
+    if missing:
+        print(f"note: {missing} file{'s have' if missing != 1 else ' has'} no summary; "
+              f"run `reaper enrich {args.repo} --pass files` first for better groups",
+              file=sys.stderr)
+    if args.dry_run:
+        print(f"groups pass, {model}, dry run: {_calls(len(report['todo']))} "
+              f"({report['cached']} of {report['groups']} groups cached), "
+              f"~{report['tokens']} input tokens, largest call ~{report['max_tokens']} tokens")
+        return 0
+    path = enrich.semantic_path(args.repo)
+    print(f"groups pass, {model}: {len(report['called'])} called, {report['cached']} cached, "
+          f"{len(report['failed'])} failed -> {path}")
+    return 1 if report["failed"] else 0
+
+
+def _enrich_architecture(args: argparse.Namespace, graph: dict, model: str) -> int:
+    report = enrich.run_architecture(args.repo, graph, model=model, dry_run=args.dry_run,
+                                     progress=print)
+    if args.dry_run:
+        print(f"architecture pass, {model}, dry run: {_calls(int(report['todo']))} "
+              f"({int(report['cached'])} cached), ~{report['tokens']} input tokens")
+        return 0
+    dropped = len(report["dropped"])
+    print(f"architecture pass, {model}: {'called' if report['called'] else 'cached'}, "
+          f"{dropped} evidence id{'s' * (dropped != 1)} dropped -> {report['path']}")
+    return 0
+
+
+ENRICH_PASSES = {"files": _enrich_files, "groups": _enrich_groups,
+                 "architecture": _enrich_architecture}
+
+
+def cmd_enrich(args: argparse.Namespace) -> int:
+    graph = _load_or_complain(args.repo)
+    if graph is None:
+        return 1
+    model = args.model or enrich.DEFAULT_MODELS[args.pass_name]
+    try:
+        return ENRICH_PASSES[args.pass_name](args, graph, model)
+    except (enrich.NotReady, llm.LLMError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
 
 def _limit(text: str) -> int:
@@ -143,7 +183,8 @@ def build_parser() -> argparse.ArgumentParser:
     enr.add_argument("--model", help="Ollama model (default: devstral-small-2:24b for files, "
                                      "qwen3-coder:30b for groups and architecture)")
     enr.add_argument("--limit", type=_limit, metavar="N",
-                     help="ask about at most N stale files, most-connected first")
+                     help="ask about at most N stale files (or groups), most-connected (largest) "
+                          "first; ignored by the architecture pass")
     enr.add_argument("--dry-run", action="store_true",
                      help="print the call count and approx input tokens; call nothing")
     enr.set_defaults(func=cmd_enrich)

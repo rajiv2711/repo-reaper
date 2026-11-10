@@ -1,12 +1,27 @@
 """Semantic passes over graph.json with a local LLM; results go to <repo>/.reaper/semantic.json.
 
-semantic.json = {files: {path: {summary, role, input_sha, model}}, groups: {...}, architecture: {...}}
+semantic.json = {files: {path: {summary, role, input_sha, model}},
+                 groups: {id: {name, summary, members, input_sha, model}},
+                 architecture: {overview, patterns, decisions, dropped_evidence, input_sha, model}}
+
+Every answer is cached under input_sha = sha256(model, prompt version, input text), so an input
+is asked again only when it, the model or the prompt changes.
 
 Files pass: one call per code file (files with a file node). Input = the file's TREE outline plus
-its source (whole when <= 300 lines, else the first 150). input_sha = sha256(model, prompt
-version, input), so a file is asked again only when its input, the model or the prompt changes.
-Work goes most-connected file first and semantic.json is saved after every answer, so an
-interrupted run (or --limit) keeps what it finished and the next run picks up the rest.
+its source (whole when <= 300 lines, else the first 150). Work goes most-connected file first and
+semantic.json is saved after every answer, so an interrupted run (or --limit) keeps what it
+finished and the next run picks up the rest.
+
+Groups pass: groups = Louvain communities (seed 42) of the file graph (files linked by their
+imports/inherits/calls edges, weight = edge count). A file with no link to another file gives
+Louvain nothing to go on, so it joins the group holding most files of its own directory (isolated
+files of a directory no group reaches form one group). One call per group: member paths + file
+summaries, capped at 12k chars -> {name, summary}. Ids g1, g2, ... go largest group first; a
+cached answer is found by input_sha, so it survives an id shift.
+
+Architecture pass: one call over the group summaries, cross-group edge counts and most-connected
+nodes -> {overview, patterns, decisions}. Needs a current answer for every group. Evidence ids
+not in graph.json are dropped. Writes <repo>/.reaper/ARCHITECTURE.md, marked LLM-generated.
 """
 
 from __future__ import annotations
@@ -14,10 +29,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Callable
+
+import networkx as nx
 
 from reaper import llm, outputs
 from reaper.graph import graph_path
@@ -108,10 +126,14 @@ def cache_key(model: str, text: str, version: str = FILES_PROMPT_VERSION) -> str
     return hashlib.sha256(f"{model}\n{version}\n{text}".encode("utf-8")).hexdigest()
 
 
-def two_sentences(text: str) -> str:
-    """At most the first two sentences, whitespace collapsed."""
+def first_sentences(text: str, n: int) -> str:
+    """At most the first n sentences, whitespace collapsed."""
     parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", " ".join(text.split()))
-    return " ".join(parts[:2])
+    return " ".join(parts[:n])
+
+
+def two_sentences(text: str) -> str:
+    return first_sentences(text, 2)
 
 
 def run_files(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS["files"],
@@ -167,4 +189,372 @@ def run_files(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS[
         save_semantic(root, sem)
         report["called"].append(path)
         say(f"[{i}/{len(todo)}] {path}: {reply['role']}")
+    return report
+
+
+# ---------------------------------------------------------------- groups
+
+LOUVAIN_SEED = 42
+GROUP_MAX_CHARS = 12000      # cap on one group's input
+GROUP_TAIL_RESERVE = 40      # room kept under the cap for the "(N more files not shown)" line
+MAX_SUMMARY_CHARS = 1000     # one file summary in a group input
+
+# Bump GROUPS_PROMPT_VERSION whenever GROUPS_SYSTEM or the group_input layout change.
+GROUPS_PROMPT_VERSION = "groups-1"
+GROUPS_SYSTEM = """\
+You describe one group of related source files of a software repository for a code map. The \
+group was found by clustering files on their imports and calls.
+You get each member's path and, when known, its role and a short summary, most-connected first \
+(the list may be cut off).
+Reply with a JSON object:
+- "name": 2 to 5 words naming what the group is responsible for, e.g. "Graph resolution" or \
+"CLI and output writers".
+- "summary": at most 3 sentences on what the group does as a whole and how its files work \
+together. Be concrete; mention key files by path.
+Describe only what the given text shows; do not guess about other files."""
+GROUPS_SCHEMA = {"type": "object",
+                 "properties": {"name": {"type": "string"}, "summary": {"type": "string"}},
+                 "required": ["name", "summary"]}
+
+
+def _file_links(graph: dict) -> Counter:
+    """(file a, file b) with a < b -> number of imports/inherits/calls edges between them."""
+    file_of = {n["id"]: n["file"] for n in graph["nodes"] if n["kind"] != "external"}
+    links = Counter()
+    for e in graph["edges"]:
+        if e["kind"] == "contains":
+            continue
+        a, b = file_of.get(e["src"]), file_of.get(e["dst"])
+        if a and b and a != b:
+            links[(min(a, b), max(a, b))] += 1
+    return links
+
+
+def communities(graph: dict) -> list[list[str]]:
+    """Groups of code files (each sorted), largest first, ties by first path.
+
+    Louvain (seed 42) on the files that have a link to another file. Each other file joins
+    the Louvain group with most files in its directory (first such group on a tie); isolated
+    files of a directory no group reaches form one group per directory.
+    """
+    g = nx.Graph()
+    for (a, b), weight in sorted(_file_links(graph).items()):
+        g.add_edge(a, b, weight=weight)
+    found = (nx.community.louvain_communities(g, weight="weight", seed=LOUVAIN_SEED)
+             if g.number_of_nodes() else [])
+    groups = sorted((sorted(c) for c in found), key=lambda m: (-len(m), m[0]))
+    dirs = [Counter(posixpath.dirname(p) for p in m) for m in groups]
+    extra = defaultdict(list)  # group index or directory -> isolated files joining it
+    for path in sorted(n["id"] for n in graph["nodes"] if n["kind"] == "file"):
+        if path in g:
+            continue
+        d = posixpath.dirname(path)
+        best = max(range(len(groups)), key=lambda i: dirs[i][d], default=None)
+        extra[best if best is not None and dirs[best][d] else d].append(path)
+    for i, m in enumerate(groups):
+        m.extend(extra.pop(i, []))
+    groups += extra.values()
+    return sorted((sorted(m) for m in groups), key=lambda m: (-len(m), m[0]))
+
+
+def group_input(members: list[str], files: dict) -> str:
+    """The user message for one group: members in the given order (most-connected first) with
+    role and summary from semantic.json's files section, cut to GROUP_MAX_CHARS."""
+    head = f"Group of {outputs._plural(len(members), 'file')}, most-connected first:\n"
+    used, lines = len(head), []
+    for path in members:
+        entry = files.get(path) or {}
+        summary = entry.get("summary")
+        if summary:
+            if len(summary) > MAX_SUMMARY_CHARS:
+                summary = summary[:MAX_SUMMARY_CHARS - 1] + "…"
+            role = f" [{entry['role']}]" if entry.get("role") else ""
+            line = f"- {path}{role}: {summary}\n"
+        else:
+            line = f"- {path}: (no summary yet)\n"
+        if used + len(line) > GROUP_MAX_CHARS - GROUP_TAIL_RESERVE:
+            break
+        lines.append(line)
+        used += len(line)
+    text = head + "".join(lines)
+    if len(lines) < len(members):
+        text += f"({outputs._plural(len(members) - len(lines), 'more file')} not shown)\n"
+    return text
+
+
+def _group_plan(graph: dict, sem: dict) -> list[tuple[str, list[str], list[str], str]]:
+    """[(id, members sorted, members most-connected first, input text)] for the graph now."""
+    rank = {p: i for i, p in enumerate(ranked_files(graph))}
+    plan = []
+    for i, members in enumerate(communities(graph), 1):
+        ordered = sorted(members, key=rank.__getitem__)
+        plan.append((f"g{i}", members, ordered, group_input(ordered, sem["files"])))
+    return plan
+
+
+def run_groups(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS["groups"],
+               limit: int | None = None, dry_run: bool = False,
+               progress: Callable[[str], None] | None = None) -> dict:
+    """Name and summarize every group whose cached answer is stale; return a report.
+
+    report = {model, groups (count), todo (ids to ask, after --limit), called, cached (count),
+    failed {id: reason}, missing_summaries (member files without a file summary), tokens,
+    max_tokens}. The groups section is rebuilt: groups that no longer exist are dropped.
+    Same failure handling as run_files.
+    """
+    say = progress or (lambda _msg: None)
+    sem = load_semantic(root)
+    old = {e.get("input_sha"): e for e in sem["groups"].values()}
+    plan = _group_plan(graph, sem)
+    entries, todo = {}, []
+    for gid, members, _, text in plan:
+        key = cache_key(model, text, GROUPS_PROMPT_VERSION)
+        hit = old.get(key)
+        if hit:
+            entries[gid] = {"name": hit["name"], "summary": hit["summary"], "members": members,
+                            "input_sha": key, "model": model}
+        else:
+            todo.append((gid, members, text, key))
+    if limit is not None:
+        todo = todo[:limit]
+    chars = [len(GROUPS_SYSTEM) + len(text) for _, _, text, _ in todo]
+    report = {"model": model, "groups": len(plan), "todo": [gid for gid, *_ in todo],
+              "called": [], "cached": len(entries), "failed": {},
+              "missing_summaries": sorted(p for _, members, _, _ in plan for p in members
+                                          if not (sem["files"].get(p) or {}).get("summary")),
+              "tokens": sum(chars) // 4, "max_tokens": max(chars, default=0) // 4}
+    if dry_run:
+        return report
+
+    def store() -> None:
+        sem["groups"] = {gid: entries[gid] for gid, *_ in plan if gid in entries}
+        save_semantic(root, sem)
+
+    store()
+    for i, (gid, members, text, key) in enumerate(todo, 1):
+        messages = [{"role": "system", "content": GROUPS_SYSTEM},
+                    {"role": "user", "content": text}]
+        try:
+            reply = llm.chat(model, messages, GROUPS_SCHEMA)
+        except llm.InvalidResponse as e:
+            report["failed"][gid] = str(e)
+            say(f"[{i}/{len(todo)}] {gid}: FAILED {e}")
+            continue
+        entries[gid] = {"name": " ".join(reply["name"].split()),
+                        "summary": first_sentences(reply["summary"], 3), "members": members,
+                        "input_sha": key, "model": model}
+        store()
+        report["called"].append(gid)
+        say(f"[{i}/{len(todo)}] {gid} ({outputs._plural(len(members), 'file')}): "
+            f"{entries[gid]['name']}")
+    return report
+
+
+# ---------------------------------------------------------------- architecture
+
+ARCH_TOP_NODES = 15          # most-connected nodes in the input
+ARCH_TOP_LINKS = 30          # cross-group pairs in the input
+ARCH_GROUP_FILES = 10        # member paths listed per group
+ARCH_GROUPS_MAX_CHARS = 16000
+
+# Bump ARCH_PROMPT_VERSION whenever ARCH_SYSTEM or the arch_input layout change.
+ARCH_PROMPT_VERSION = "architecture-1"
+ARCH_SYSTEM = """\
+You describe the architecture of a software repository from a code map.
+You get the repository's groups of files (each with a name, a summary and its main files), \
+how many imports/inherits/calls edges go from one group to another, and the most-connected \
+nodes (files and symbols) with their edge counts.
+Reply with a JSON object:
+- "overview": 3 to 6 sentences on what the system is for, its main parts and how data or \
+control flows between them.
+- "patterns": architectural or design patterns the code shows, each {"name", "explanation" \
+(1 to 2 sentences on where and how it is used), "evidence" (node ids)}.
+- "decisions": notable design decisions, each {"decision", "rationale" (1 to 2 sentences on \
+why it was likely made and its trade-off), "evidence" (node ids)}.
+Evidence must be node ids copied exactly from the input: file paths like "pkg/mod.py" or \
+symbol ids like "pkg/mod.py::Class.method". Never invent ids; group ids like "g1" are not \
+node ids. Describe only what the given text supports; prefer few well-supported items."""
+_EVIDENCE = {"type": "array", "items": {"type": "string"}}
+ARCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "overview": {"type": "string"},
+        "patterns": {"type": "array", "items": {
+            "type": "object", "required": ["name", "explanation", "evidence"],
+            "properties": {"name": {"type": "string"}, "explanation": {"type": "string"},
+                           "evidence": _EVIDENCE}}},
+        "decisions": {"type": "array", "items": {
+            "type": "object", "required": ["decision", "rationale", "evidence"],
+            "properties": {"decision": {"type": "string"}, "rationale": {"type": "string"},
+                           "evidence": _EVIDENCE}}},
+    },
+    "required": ["overview", "patterns", "decisions"],
+}
+
+
+class NotReady(RuntimeError):
+    """The architecture pass needs a current groups pass first."""
+
+
+def _fresh(entry: dict | None, members: list[str], text: str) -> bool:
+    return bool(entry) and entry.get("members") == members and entry.get("input_sha") == \
+        cache_key(entry.get("model", ""), text, GROUPS_PROMPT_VERSION)
+
+
+def _arch_parts(graph: dict, sem: dict) -> tuple[list, list[str], list[str]]:
+    """(plan, cross-group lines, most-connected lines); NotReady unless every current group
+    has an answer for its current input."""
+    plan = _group_plan(graph, sem)
+    if not plan:
+        raise NotReady("the graph has no code files, so there are no groups")
+    stale = [gid for gid, members, _, text in plan if not _fresh(sem["groups"].get(gid), members,
+                                                                 text)]
+    if stale:
+        raise NotReady(f"{len(stale)} of {len(plan)} groups have no current answer "
+                       f"({outputs._listed(stale)}); run `reaper enrich <repo> --pass groups` "
+                       "first")
+    order = {gid: i for i, (gid, *_) in enumerate(plan)}
+    group_of = {p: gid for gid, members, *_ in plan for p in members}
+    file_of = {n["id"]: n["file"] for n in graph["nodes"] if n["kind"] != "external"}
+    cross = defaultdict(Counter)
+    for e in graph["edges"]:
+        a, b = file_of.get(e["src"]), file_of.get(e["dst"])
+        if e["kind"] != "contains" and a and b and group_of[a] != group_of[b]:
+            cross[(group_of[a], group_of[b])][e["kind"]] += 1
+    pairs = sorted(cross.items(), key=lambda kv: (-sum(kv[1].values()), order[kv[0][0]],
+                                                  order[kv[0][1]]))
+    cross_lines = [f"- {a} -> {b}: {sum(c.values())} ("
+                   + ", ".join(f"{kind} {n}" for kind, n in sorted(c.items())) + ")"
+                   for (a, b), c in pairs[:ARCH_TOP_LINKS]]
+    if len(pairs) > ARCH_TOP_LINKS:
+        cross_lines.append(f"({len(pairs) - ARCH_TOP_LINKS} more group pairs not shown)")
+    node_lines = [f"- {i}: in {d_in}, out {d_out}"
+                  for i, d_in, d_out in outputs.most_connected(graph, ARCH_TOP_NODES)]
+    return plan, cross_lines or ["- none"], node_lines or ["- none"]
+
+
+def arch_input(graph: dict, sem: dict) -> str:
+    """The user message for the architecture pass (NotReady when groups are missing/stale)."""
+    plan, cross_lines, node_lines = _arch_parts(graph, sem)
+    blocks, used = [], 0
+    for gid, members, ordered, _ in plan:
+        e = sem["groups"][gid]
+        block = (f"{gid}: {e['name']} ({outputs._plural(len(members), 'file')})\n{e['summary']}\n"
+                 f"Files: {outputs._listed(ordered, ARCH_GROUP_FILES)}\n")
+        if blocks and used + len(block) > ARCH_GROUPS_MAX_CHARS:
+            break
+        blocks.append(block)
+        used += len(block)
+    text = f"Groups ({len(plan)}):\n\n" + "\n".join(blocks)
+    if len(blocks) < len(plan):
+        text += f"\n({outputs._plural(len(plan) - len(blocks), 'more group')} not shown)\n"
+    return (text + "\nCross-group edges (from -> to: count by kind):\n"
+            + "".join(line + "\n" for line in cross_lines)
+            + "\nMost-connected nodes (in/out edges over imports, inherits, calls):\n"
+            + "".join(line + "\n" for line in node_lines))
+
+
+def _clean_items(items, title: str, text: str, known: set[str], dropped: set[str]) -> list[dict]:
+    """Keep well-formed {title, text, evidence} items; evidence = known node ids only
+    (backticks and spaces stripped, duplicates removed); unknown ids go to `dropped`."""
+    out = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get(title), str) \
+                or not item[title].strip():
+            continue
+        body = item.get(text)
+        evidence = []
+        refs = item.get("evidence")
+        for ref in refs if isinstance(refs, list) else []:
+            if not isinstance(ref, str):
+                continue
+            ref = ref.strip().strip("`").strip()
+            if ref in known:
+                if ref not in evidence:
+                    evidence.append(ref)
+            elif ref:
+                dropped.add(ref)
+        out.append({title: " ".join(item[title].split()),
+                    text: " ".join(body.split()) if isinstance(body, str) else "",
+                    "evidence": evidence})
+    return out
+
+
+def _cell(text: str) -> str:
+    return " ".join(str(text).split()).replace("|", "\\|")
+
+
+def architecture_md(graph: dict, sem: dict) -> str:
+    """ARCHITECTURE.md from semantic.json's architecture and groups sections."""
+    a = sem["architecture"]
+    plan, cross_lines, _ = _arch_parts(graph, sem)
+    dropped = len(a["dropped_evidence"])
+    lines = ["# Architecture", "",
+             f"> LLM-generated by {a['model']} (`reaper enrich --pass architecture`) from the "
+             "group summaries and graph.json; reaper does not verify these claims. Evidence "
+             f"lists only node ids that exist in graph.json "
+             f"({outputs._plural(dropped, 'evidence id')} not found there were dropped).",
+             "", "## Overview", "", a["overview"], ""]
+
+    def evidence(ids: list[str]) -> str:
+        return "Evidence: " + (", ".join(f"`{i}`" for i in ids) if ids else "none")
+
+    for heading, items, title, text in (("Patterns", a["patterns"], "name", "explanation"),
+                                        ("Design decisions", a["decisions"], "decision",
+                                         "rationale")):
+        lines += [f"## {heading}", ""]
+        for item in items:
+            lines += [f"### {item[title]}", ""]
+            if item[text]:
+                lines += [item[text], ""]
+            lines += [evidence(item["evidence"]), ""]
+        if not items:
+            lines += ["None given.", ""]
+    lines += ["## Groups", "", "| Group | Name | Files | Summary |", "|---|---|--:|---|"]
+    for gid, members, _, _ in plan:
+        e = sem["groups"][gid]
+        lines.append(f"| {gid} | {_cell(e['name'])} | {len(members)} | {_cell(e['summary'])} |")
+    lines += ["", "## Cross-group edges", "", *cross_lines, ""]
+    return "\n".join(lines)
+
+
+def run_architecture(root: str | os.PathLike, graph: dict,
+                     model: str = DEFAULT_MODELS["architecture"], dry_run: bool = False,
+                     progress: Callable[[str], None] | None = None) -> dict:
+    """One call over the groups (unless cached); write ARCHITECTURE.md; return a report.
+
+    report = {model, todo (a call is needed), called, cached, tokens, dropped (evidence ids
+    not in graph.json), path (ARCHITECTURE.md)}. NotReady when groups are missing or stale;
+    llm.LLMError (including InvalidResponse) when the call fails.
+    """
+    say = progress or (lambda _msg: None)
+    sem = load_semantic(root)
+    text = arch_input(graph, sem)
+    key = cache_key(model, text, ARCH_PROMPT_VERSION)
+    cached = sem["architecture"].get("input_sha") == key
+    report = {"model": model, "todo": not cached, "called": False, "cached": cached,
+              "tokens": 0 if cached else (len(ARCH_SYSTEM) + len(text)) // 4,
+              "dropped": [], "path": None}
+    if dry_run:
+        return report
+    if cached:
+        answer = sem["architecture"]
+    else:
+        say(f"asking {model} about {outputs._plural(len(sem['groups']), 'group')} ...")
+        answer = llm.chat(model, [{"role": "system", "content": ARCH_SYSTEM},
+                                  {"role": "user", "content": text}], ARCH_SCHEMA)
+        report["called"] = True
+    known = {n["id"] for n in graph["nodes"]}
+    dropped = set(answer.get("dropped_evidence", []))
+    overview = answer.get("overview")
+    sem["architecture"] = {
+        "overview": overview.strip() if isinstance(overview, str) else "",
+        "patterns": _clean_items(answer.get("patterns"), "name", "explanation", known, dropped),
+        "decisions": _clean_items(answer.get("decisions"), "decision", "rationale", known,
+                                  dropped),
+        "dropped_evidence": sorted(dropped), "input_sha": key, "model": model}
+    save_semantic(root, sem)
+    path = semantic_path(root).parent / "ARCHITECTURE.md"
+    path.write_text(architecture_md(graph, sem), encoding="utf-8")
+    report["dropped"], report["path"] = sem["architecture"]["dropped_evidence"], path
     return report
