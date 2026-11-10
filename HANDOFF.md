@@ -1,30 +1,30 @@
 # HANDOFF
-Phase 2 | status: done
+Phase 3 | status: done
 
 ## Done this session
-- tests/test_extract_py.py written FIRST (expected values by hand from the fixture), then reaper/extract_py.py:
-  module_name(path) per spec (+ drops .pyi); extract(path, source: str|bytes, module) -> (nodes, refs), pure.
-- Nodes: file node (name = module, signature None, doc = module docstring line 1) + class/function/method, nested
-  ones too ("a.py::A.run.helper"). Class signature "User(Entity)"; function "__init__(self, repo=None)", "async "
-  prefix, " -> T" return. Duplicate qualname (property + setter): first wins. Absent doc/signature/alias = null.
-- Refs: src = innermost enclosing class/function id, else file id. import alias = the text that refers to target
-  (`import a.b` -> alias "a.b"; `from a import *` -> target "a", alias "*"); __future__ imports skipped.
-  call target = dotted text ("self.repo.save", "super().__init__", "name.strip().lower"); nameless callees skipped.
-  Decorators/defaults/annotations belong to the enclosing scope. inherit: Generic[T] -> "Generic", metaclass= ignored.
-  Syntax error / null bytes -> file node only.
-- reaper/graph.py: graph_path, new_graph (meta {version: 1, generated_at}), extract_file (dispatch by lang), build,
-  save (atomic), load. `files` holds ALL discovered files; only python files get nodes (README.md: none).
-- `reaper map <repo>` in cli.py. Fixture totals: nodes file 5/class 4/method 10/function 4; refs import 9/call 25/inherit 1.
-- Robustness: build() on the whole CPython stdlib (2936 files) in 3.7s, no crash, no duplicate ids.
+- tests/test_resolve.py written FIRST: every non-contains fixture edge by hand (8 imports, 1 inherits, 12 calls,
+  each with confidence), 18 contains, ext nodes, idempotency/order independence, plus 2 mini repos (re-exports,
+  star imports, nested scopes, grandparent methods, external-alias stop, AMBIGUOUS, >5 candidates).
+- reaper/resolve.py: resolve(nodes, refs) -> (nodes, edges). Drops incoming external nodes and rebuilds them
+  (ext:<top>, file/line/signature/doc null), so it is idempotent. Edges deduped per (src, dst, kind) keeping the
+  strongest confidence, sorted by (kind, src, dst) -> independent of file order. graph.build() now calls it.
+- Rule details beyond the AGENTS.md wording (all documented in the resolve.py docstring):
+  super().x -> base method INFERRED, else no edge; self.x not on class/bases -> falls through to rules 2-5;
+  aliases follow re-exports (pkg/__init__ `from .core import X`) and `from m import *` (max 5 hops);
+  `import a.b` also binds `a`; alias match ignores a trailing "()" (Path().resolve -> pathlib, external);
+  rule 5: bare f() matches only top-level functions/classes, dotted x.f() only methods;
+  inherits via alias / same-file scope / star import; base outside the repo -> no edge.
+- tests/test_graph.py: Phase 2 counts 23 -> 25 nodes (spec-mandated ext:json, ext:os), now also asserts edges.
+- Robustness: CPython stdlib, 2936 files -> 129k edges in 4.4s, 0 dangling edges, no duplicate ids.
 
 ## Exact next step
-Phase 3: write tests/test_resolve.py FIRST listing every expected non-contains fixture edge + confidence, then
-reaper/resolve.py resolve(nodes, refs) -> edges, and replace the `edges=[]` TODO in graph.build() with it.
-Hints: per-file aliases = import refs grouped by ref["file"]; "super().x" calls -> base-class method;
-external nodes (ext:<top package>) are created by resolve.
+Phase 4: write tests/test_update.py FIRST, then graph.update(root) -> {added, changed, deleted, unchanged} and
+`reaper update` in cli.py. Keep nodes/refs of unchanged files (match on node["file"] / ref["file"]; external
+nodes have file null and are rebuilt by resolve), re-extract added/changed, then nodes, edges = resolve(...).
+Hints: missing graph.json -> full build; "identical graph" test should ignore meta.generated_at.
 
-## Blockers: none (note: AGENTS.md Phase 3 lists rule "(3) same-file name" twice; treat as one rule)
+## Blockers: none (AGENTS.md Phase 3 lists "(3) same-file name" twice; treated as one rule)
 
 ## Verify
-conda run -n repo-reaper pytest -q                -> 44 passed
-conda run -n repo-reaper reaper map .             -> 23 files, 100 nodes, 341 refs, 0 edges -> .reaper/graph.json
+conda run -n repo-reaper pytest -q     -> 50 passed
+conda run -n repo-reaper reaper map .  -> 25 files, 144 nodes, 475 refs, 294 edges -> .reaper/graph.json

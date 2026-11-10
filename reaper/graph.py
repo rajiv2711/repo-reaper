@@ -14,6 +14,7 @@ from pathlib import Path
 
 from reaper import extract_py
 from reaper.discover import discover
+from reaper.resolve import resolve
 
 VERSION = 1
 OUT_DIR = ".reaper"
@@ -37,7 +38,7 @@ def extract_file(root: Path, rel: str, lang: str) -> tuple[list[dict], list[dict
 
 
 def build(root: str | os.PathLike) -> dict:
-    """Full structural build: discover every file, extract each one."""
+    """Full structural build: discover every file, extract each one, resolve edges."""
     root = Path(root).resolve()
     files = discover(root)
     nodes, refs = [], []
@@ -45,8 +46,8 @@ def build(root: str | os.PathLike) -> dict:
         n, r = extract_file(root, rel, info["lang"])
         nodes.extend(n)
         refs.extend(r)
-    # TODO Phase 3: edges = resolve(nodes, refs)
-    return new_graph(files, nodes, refs, edges=[])
+    nodes, edges = resolve(nodes, refs)
+    return new_graph(files, nodes, refs, edges)
 
 
 def save(root: str | os.PathLike, graph: dict) -> Path:

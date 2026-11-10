@@ -61,7 +61,7 @@ function name defined in two files.
   extract_py.extract(path, source, module) -> nodes + raw refs via `ast`. Classes, functions, methods with line, signature like "create(self, name)", first docstring line. Refs: imports (absolute 
 target + local alias; relative imports made absolute), calls (dotted callee text like "self.repo.save"), class bases. Syntax error -> file node only. `reaper map` writes graph.json.
   Accept: tests assert node counts by kind and specific refs on the fixture. Write expected values by hand from the fixture source BEFORE implementing.
-- [ ] Phase 3: Resolution
+- [x] Phase 3: Resolution
   resolve.py rebuilds all edges. contains: parent -> child. imports: file -> repo file (longest module-name prefix match), else -> ext:<top package>. inherits: base resolved via imports or same 
 file. calls, in order:
   (1) self.x inside a class -> own method EXTRACTED, else base-class method INFERRED
