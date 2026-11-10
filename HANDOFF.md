@@ -4,7 +4,7 @@ Phase 1 | status: done
 ## Done this session
 - AGENTS.md (spec + plan) created; Phase 1 ticked.
 - pyproject.toml: console script `reaper` -> reaper.cli:main; deps networkx, dev extra pytest. .gitignore per spec.
-- .venv (Python 3.13) has an editable install: `.venv/bin/pip install -e '.[dev]'`.
+- Env: conda env `repo-reaper` (Python 3.12, editable install), recreate with `conda env create -f environment.yml`.
 - reaper/discover.py: list_files (in git: `git ls-files -co --exclude-standard -z`, else os.walk; SKIP_DIRS in both;
   drops symlinks and index entries missing on disk), language (by extension, "other" if unknown),
   file_info -> {lang, sha256, lines}, discover -> {path: {lang, sha256, lines}} (= graph.json `files`), count_by_language.
@@ -26,5 +26,5 @@ Note: discover() also returns non-Python files (README.md); decide whether they 
 ## Note: AGENTS.md Phase 3 lists "(3) same-file name -> EXTRACTED" twice (kept verbatim); treat as one rule.
 
 ## Verify
-.venv/bin/pytest -q                              -> 17 passed
-.venv/bin/reaper scan tests/fixtures/sample_py   -> python 5 / markdown 1 / total 6
+conda run -n repo-reaper pytest -q                              -> 17 passed
+conda run -n repo-reaper reaper scan tests/fixtures/sample_py   -> python 5 / markdown 1 / total 6

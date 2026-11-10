@@ -1,0 +1,11 @@
+name: repo-reaper
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - networkx
+  - pytest
+  - pip
+  - pip:
+      - -e .

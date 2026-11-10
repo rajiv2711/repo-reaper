@@ -18,7 +18,7 @@ Incremental update = re-extract changed files, then resolve again.
 
 ## Stack
 Python 3.11+ stdlib (ast, json, hashlib, argparse, subprocess, urllib), networkx, pytest. No other dependencies without a note in HANDOFF.md.
-Always use the venv: .venv/bin/python, .venv/bin/pytest -q, .venv/bin/reaper
+Always use the conda env `repo-reaper` (defined in environment.yml; create with `conda env create -f environment.yml`): conda run -n repo-reaper python, conda run -n repo-reaper pytest -q, conda run -n repo-reaper reaper
 
 ## Layout
 reaper/cli.py          `reaper` entry point (argparse)
@@ -91,7 +91,7 @@ ARCHITECTURE.md marked "LLM-generated".
 - [ ] Phase 8 (optional): More languages via tree-sitter-language-pack, same extract contract.
 
 ## Session protocol
-Start: read HANDOFF.md; run `git log --oneline -5` and `.venv/bin/pytest -q`; say "This session: Phase N". Work on the phase HANDOFF.md marks partial, else the first unchecked phase. Only that 
+Start: read HANDOFF.md; run `git log --oneline -5` and `conda run -n repo-reaper pytest -q`; say "This session: Phase N". Work on the phase HANDOFF.md marks partial, else the first unchecked phase. Only that 
 phase.
 During:
 - Small steps; run tests after each. Never claim something works without showing the command output.
@@ -100,7 +100,7 @@ During:
 - Never edit expected test values just to make tests pass; fix the code.
 - Same failure after 3 fix attempts: stop and record it as a blocker.
 End (phase done, blocked, or about 40 tool calls in):
-1. Run `.venv/bin/pytest -q` and show the summary line.
+1. Run `conda run -n repo-reaper pytest -q` and show the summary line.
 2. Tick the phase above only if its acceptance passed.
 3. Rewrite HANDOFF.md from scratch, max 30 lines: Phase N | status (done/partial/blocked) | done this session | exact next step | blockers | verify command + result.
 4. `git add -A && git commit -m "Phase N: <summary>"`
