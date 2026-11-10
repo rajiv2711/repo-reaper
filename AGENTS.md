@@ -74,7 +74,7 @@ file. calls, in order:
 - [x] Phase 4: Incremental update
   `reaper update`: compare sha256s; re-extract added/changed, drop deleted, skip unchanged, then resolve. Return {added, changed, deleted, unchanged}.
   Accept: a no-change run gives an identical graph; editing one file, deleting one and adding one gives correct counts and edges.
-- [ ] Phase 5: Outputs + query
+- [x] Phase 5: Outputs + query
   TREE.txt (per file: classes/functions with signatures and line numbers), SUMMARY.md (stats, most-connected nodes, import cycles via networkx, external deps), graph.html (single file, vis-network
 9.1.9 from unpkg, dashed edges when not EXTRACTED), `reaper query`.
   Accept: tests check key strings in each output and query results on the fixture.
