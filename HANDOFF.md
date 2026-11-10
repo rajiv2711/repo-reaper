@@ -1,30 +1,30 @@
 # HANDOFF
-Phase 5 | status: done
+Phase 6 | status: done
 
 ## Done this session
-- tests/test_outputs.py written FIRST (23 tests, hand-derived values): exact TREE.txt of the fixture, SUMMARY
-  stats/top-10 (in/out/total)/externals/cycles, graph.html embedded data + dashes, export + query via the CLI.
-- reaper/outputs.py: tree_text / file_outline(graph, path) (one TREE block; reuse it for the Phase 6 outline),
-  summary_md, degrees / most_connected (imports+inherits+calls only, no externals), import_cycles (networkx
-  SCCs + one shortest cycle through the smallest path), graph_html, export, find_nodes, query, format_query.
-- graph.html: vis-network 9.1.9 from unpkg, data in <script id="graph-data" type="application/json"> with "<"
-  escaped, dashed = not EXTRACTED, edge-kind checkboxes, find box. Over MAX_HTML_NODES=3000 nodes it draws files
-  + externals only, with a note (stdlib: 17 MB -> 816 KB). Headless Chrome render checked by eye.
-- cli.py: `reaper export` (writes .reaper/TREE.txt, SUMMARY.md, graph.html), `reaper query callers|callees|deps
-  NAME [--json]`; both exit 1 with "run `reaper map`" when graph.json is missing; no match -> exit 1.
-- NAME lookup, first non-empty tier: exact id; qualname / module.qualname / module / external name; last name
-  part (symbol name or last module part, e.g. "outputs"). deps of a symbol = deps of its file; shows both
-  imports and imported_by.
-- Mutation checks: no dashes, contains in degree, no "<" escape, skipping exact tier -> each fails tests.
+- Tests first, mocked (no Ollama): tests/test_llm.py (13: payload, OLLAMA_HOST forms, retry on 5 bad-reply kinds,
+  fake local HTTP server, HTTP 404, closed port); tests/test_enrich.py (20: hand-ranked files, exact input text,
+  150/300-line cut, cache, --limit, dry-run, failures, prune, CLI).
+- reaper/llm.py: chat(model, messages, schema) -> dict. POST {OLLAMA_HOST|localhost:11434}/api/chat, stream false,
+  format=schema, temperature 0, never num_ctx, timeout 600 s. Bad reply (not JSON / missing key / wrong type / not
+  in enum; top level only) -> one retry with bad reply + correction appended, then InvalidResponse. Network/HTTP -> LLMError.
+- reaper/enrich.py: run_files(root, graph, model, limit, dry_run, progress) -> report. Code files only (file nodes).
+  Input = "File: p" + outputs.file_outline + source. input_sha = sha256(f"{model}\n{FILES_PROMPT_VERSION}\n{input}").
+  role = enum ROLES (11 incl. "other"); summary cut to 2 sentences. Order: ranked_files (sum of outputs.degrees over
+  the file's nodes). --limit N = first N *stale* files, so repeat runs continue. semantic.json saved after every
+  answer; deleted files pruned; groups/architecture kept. InvalidResponse skips the file (exit 1); LLMError aborts.
+- cli.py: `reaper enrich <repo> --pass files|groups|architecture [--model M] [--limit N] [--dry-run]`; groups and
+  architecture say "not implemented yet (Phase 7)", exit 1. Per-pass default models: enrich.DEFAULT_MODELS.
+- 9 mutation checks (no cache hit, off-by-one cut, no retry, num_ctx sent, ...) all fail tests. Real run here,
+  devstral-small-2:24b --limit 2: 2 called in 25 s, good summaries; dry re-run -> 2 cached.
 
 ## Exact next step
-Phase 6: tests first with a mocked llm (no Ollama) for reaper/llm.py + enrich --pass files; build the per-file
-input from outputs.file_outline + source; --limit can rank files with outputs.degrees.
-
+Phase 7, tests first with mocked llm.chat: Louvain groups (seed=42) on the file graph; groups pass (member paths +
+summaries, cap 12k chars); architecture pass (drop evidence ids not in graph.json); ARCHITECTURE.md. Reuse
+enrich.load/save_semantic, cache_key(..., version=...), llm.chat; add run_groups/run_architecture, wire in cmd_enrich.
 ## Blockers: none
-Notes: SUMMARY lists at most 5 files per cycle group / external (", ... (+N more)").
+Notes: tests rank high (test_enrich.py was #2 here); proposal only: rank tests last. Ollama here has both models.
 
 ## Verify
-conda run -n repo-reaper pytest -q                          -> 80 passed
-conda run -n repo-reaper reaper map . && reaper export .    -> 212 nodes, 482 edges; 3 files written
-conda run -n repo-reaper reaper query . deps outputs        -> imports discover.py, graph.py + 5 ext
+conda run -n repo-reaper pytest -q                               -> 113 passed
+conda run -n repo-reaper reaper enrich . --pass files --dry-run  -> 24 calls, ~35913 tokens (after `reaper map .`)

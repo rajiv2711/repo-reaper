@@ -78,7 +78,7 @@ file. calls, in order:
   TREE.txt (per file: classes/functions with signatures and line numbers), SUMMARY.md (stats, most-connected nodes, import cycles via networkx, external deps), graph.html (single file, vis-network
 9.1.9 from unpkg, dashed edges when not EXTRACTED), `reaper query`.
   Accept: tests check key strings in each output and query results on the fixture.
-- [ ] Phase 6: Semantic pass, files (fast model)
+- [x] Phase 6: Semantic pass, files (fast model)
   llm.py: POST {OLLAMA_HOST or http://localhost:11434}/api/chat with stream false, format = JSON schema, temperature 0; retry once on invalid JSON; never send num_ctx. enrich --pass files: input 
 per file = TREE outline + source (whole if <= 300 lines, else first 150) -> {summary (max 2 sentences), role}. Cache key = sha256(model + prompt version + input), stored in semantic.json. --limit 
 picks most-connected files first. --dry-run prints call count and approx tokens (chars/4).

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from reaper.discover import count_by_language, discover
-from reaper import outputs
+from reaper import enrich, llm, outputs
 from reaper.graph import build, graph_path, load, save, update
 
 
@@ -73,6 +73,42 @@ def cmd_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_enrich(args: argparse.Namespace) -> int:
+    graph = _load_or_complain(args.repo)
+    if graph is None:
+        return 1
+    if args.pass_name != "files":
+        print(f"--pass {args.pass_name} is not implemented yet (Phase 7)", file=sys.stderr)
+        return 1
+    model = args.model or enrich.DEFAULT_MODELS[args.pass_name]
+    try:
+        report = enrich.run_files(args.repo, graph, model=model, limit=args.limit,
+                                  dry_run=args.dry_run, progress=print)
+    except llm.LLMError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    for path, reason in report["failed"].items():
+        if path not in report["todo"]:  # failed before any call (unreadable file)
+            print(f"{path}: FAILED {reason}")
+    if args.dry_run:
+        calls = len(report["todo"])
+        print(f"files pass, {model}, dry run: {calls} call{'s' * (calls != 1)} "
+              f"({report['cached']} cached), ~{report['tokens']} input tokens, "
+              f"largest call ~{report['max_tokens']} tokens")
+        return 0
+    path = enrich.semantic_path(args.repo)
+    print(f"files pass, {model}: {len(report['called'])} called, {report['cached']} cached, "
+          f"{len(report['failed'])} failed -> {path}")
+    return 1 if report["failed"] else 0
+
+
+def _limit(text: str) -> int:
+    n = int(text)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return n
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="reaper", description="Map a code repository into a graph.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -99,6 +135,18 @@ def build_parser() -> argparse.ArgumentParser:
     qry.add_argument("name", help="node id, qualified name, module name or plain name")
     qry.add_argument("--json", action="store_true", help="print results as JSON")
     qry.set_defaults(func=cmd_query)
+
+    enr = sub.add_parser("enrich", help="LLM semantic pass via Ollama -> .reaper/semantic.json")
+    enr.add_argument("repo", type=Path)
+    enr.add_argument("--pass", dest="pass_name", required=True,
+                     choices=["files", "groups", "architecture"])
+    enr.add_argument("--model", help="Ollama model (default: devstral-small-2:24b for files, "
+                                     "qwen3-coder:30b for groups and architecture)")
+    enr.add_argument("--limit", type=_limit, metavar="N",
+                     help="ask about at most N stale files, most-connected first")
+    enr.add_argument("--dry-run", action="store_true",
+                     help="print the call count and approx input tokens; call nothing")
+    enr.set_defaults(func=cmd_enrich)
 
     return parser
 
