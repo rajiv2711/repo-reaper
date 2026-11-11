@@ -270,7 +270,7 @@ def group_input(members: list[str], files: dict) -> str:
     for path in members:
         entry = files.get(path) or {}
         summary = entry.get("summary")
-        if summary:
+        if isinstance(summary, str) and summary:  # a hand-edited non-string = no summary
             if len(summary) > MAX_SUMMARY_CHARS:
                 summary = summary[:MAX_SUMMARY_CHARS - 1] + "…"
             role = f" [{entry['role']}]" if entry.get("role") else ""

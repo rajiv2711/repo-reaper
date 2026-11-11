@@ -81,6 +81,27 @@ def test_export_non_object_semantic_warns(sample_repo, capsys):
         assert html_data(read_html(sample_repo))["sem"] is None
 
 
+def test_export_unreadable_semantic_warns(sample_repo, capsys):
+    # 08-VERIFICATION G1: an OSError reading semantic.json (here: it is a directory) warns
+    # and falls back to the structural page instead of a traceback
+    assert main(["map", str(sample_repo)]) == 0
+    enrich.semantic_path(sample_repo).mkdir(parents=True)
+    capsys.readouterr()
+    assert main(["export", str(sample_repo)]) == 0
+    err = capsys.readouterr().err
+    assert "semantic.json" in err and "cannot be read" in err
+    assert html_data(read_html(sample_repo))["sem"] is None
+
+
+def test_export_non_string_summary_does_not_crash(sample_repo):
+    # 08-VERIFICATION G2: a hand-edited non-string summary must not crash export
+    # (group_input, reached via view_semantic -> _group_plan, called len() on it)
+    assert main(["map", str(sample_repo)]) == 0
+    write_semantic(sample_repo, json.dumps({"files": {M: {"summary": 5, "role": "model"}}}))
+    assert main(["export", str(sample_repo)]) == 0
+    assert html_data(read_html(sample_repo))["sem"]["files"][M]["role"] == "model"
+
+
 # ---------------------------------------------------------------- 08-03-2 (regression guards)
 
 def test_export_leaves_inputs_untouched(sample_repo):

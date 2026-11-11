@@ -58,6 +58,8 @@ def _view_semantic(repo: Path, graph: dict) -> dict | None:
         problem = f"is not valid JSON ({err})"
     except AttributeError:  # enrich.load_semantic: valid JSON, but not an object
         problem = "is not a JSON object"
+    except OSError as err:  # e.g. PermissionError, IsADirectoryError
+        problem = f"cannot be read ({err.strerror or err})"
     print(f"warning: {enrich.semantic_path(repo)} {problem}; graph.html has no semantic layer",
           file=sys.stderr)
     return None

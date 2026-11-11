@@ -90,7 +90,7 @@ picks most-connected files first. --dry-run prints call count and approx tokens 
 group summaries + cross-group edge counts + most-connected nodes -> {overview, patterns: [{name, explanation, evidence: [node ids]}], decisions: [...]}. Drop evidence ids not in graph.json. Write 
 ARCHITECTURE.md marked "LLM-generated".
   Accept: mocked tests, including a fake evidence id being dropped; a manual run on this repo works.
-- [ ] Phase 8: Interactive HTML view (GSD-style; docs in docs/phases/08-html-view/)
+- [x] Phase 8: Interactive HTML view (GSD-style; docs in docs/phases/08-html-view/)
   Goal: graph.html becomes the way to explore a mapped repo: find any symbol, see what it is, what touches it and what the LLM layer says about it, on repos of any size.
   Depends on: Phase 5 (graph.html), Phase 7 (semantic.json). Locked decisions: docs/phases/08-html-view/08-CONTEXT.md (D-xx); later steps never contradict them.
   Requirements: VIEW-01 search (id, name, signature; ranked list as you type). VIEW-02 click -> side panel (kind, signature, file:line, doc, file summary + role, callers/callees/imports/imported-by/bases with confidence, all clickable).
