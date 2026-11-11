@@ -1,22 +1,24 @@
 # HANDOFF
-Phase 9 (Tree mode) | status: partial | waiting for the user's browser check
+Phase 9 (Tree mode) | status: done | ticked in AGENTS.md (user browser checklist 1-8: all pass)
 
 ## Done this session
 - First attempt (tree layout replacing Graph) dropped at the user's request: main reset to 21ba424, old Phase 9
   tag deleted; one clean main branch. Not pushed.
-- AGENTS.md Phase 9 = "Tree mode" (Graph | Tree buttons, Graph = Phase 8 unchanged and default); tree-sitter -> Phase 10.
-- 09-PLAN.md executed: tree model, Tree look as data copies, the two-network mode switch, Tree LLM colours.
-- Phase 8 bug fixed with the user's OK: Graph lost LLM group colours on the first refresh (vis re-applies the group
-  style on colourless updates); llmColour(id) now sent with every position update in both modes.
-- 09-SUMMARY.md: changes, tests (15 new; Phase 5/8 test files unchanged), 8-item browser checklist.
+- graph.html: Graph | Tree toggle buttons. Graph = Phase 8 network, default, unchanged except one user-approved bug
+  fix (LLM group colours were lost on the first refresh; llmColour(id) now sent with every position update).
+  Tree = second vis network (physics off, treeLayout positions, page-only folders, branch vs relation curves),
+  sharing selection, search, panel, hop focus, filters, LLM layer, Collapse all and deep links.
+- Tests: 15 new in tests/test_html_tree.py; Phase 5/8 test files unchanged. Docs: docs/phases/09-tree-mode/
+  09-PLAN.md, 09-SUMMARY.md.
 
 ## Exact next step
-User runs the checklist in docs/phases/09-tree-mode/09-SUMMARY.md on .reaper/graph.html (`reaper export .`) and on
-the synthetic repo (generator: docs/phases/08-html-view/08-RESEARCH.md near l.310: python gen.py <dir> 400,
-reaper map <dir>, reaper export <dir>). All pass -> tick Phase 9 in AGENTS.md, End steps. A fail -> fix, test first.
+Phase 10 (optional): more languages via tree-sitter-language-pack, same extract contract. It needs a new
+dependency, so first propose it in HANDOFF.md (AGENTS.md Stack rule), then plan it.
 
 ## Open notes
-- Mode is not in the deep link (#node=<id>&hops=N opens Graph); possible follow-up: &view=tree.
+- Deep links (#node=<id>&hops=N) always open in Graph; possible follow-up: &view=tree.
+- Known Tree behaviour (09-SUMMARY.md): folders not in legend counts; hop focus hangs a symbol with a hidden file
+  under its folder; long relation curves bulge in Fit view; plain A-Z file order.
 - node >= 18 (/usr/bin/node) is an optional test-time tool for test_js_*; REAPER_REQUIRE_NODE=1 makes them fail
   instead of skip. Not a Python dependency.
 - Proposal from 08-03-SUMMARY still open: root-cause non-object semantic.json in enrich.load_semantic.

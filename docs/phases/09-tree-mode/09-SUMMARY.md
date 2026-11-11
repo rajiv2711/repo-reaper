@@ -1,4 +1,4 @@
-# Phase 9 - Tree mode: summary
+# Phase 9 - Tree mode: summary (user browser checklist 1-8: all pass, 2026-11-11)
 
 What changed (reaper/templates/graph.html only; outputs.py, graph.json, semantic.json, CLI and embedded data unchanged)
 - Toolbar Graph | Tree buttons. Graph = the Phase 8 network, default, untouched: of the Phase 8 template exactly one
