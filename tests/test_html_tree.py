@@ -6,7 +6,7 @@ Expected rows are written by hand from tests/fixtures/sample_py (not printed fro
 
 import json
 
-from test_html_template import fixture_html, fn_body, html_data, run_js, write
+from test_html_template import AMB, SEM, fixture_html, fn_body, html_data, run_js, write
 
 from reaper import outputs
 from reaper.graph import build
@@ -155,3 +155,97 @@ def test_template_tree_strings():
     for s in ("document.", "net.", "nodes.update", "nodes.get", "edges.update"):
         assert s not in body, s
 
+
+
+# ---------------------------------------------------------------- Tree look as data copies; Graph data untouched (task 2)
+
+BRANCH = {"enabled": True, "type": "cubicBezier", "forceDirection": "horizontal"}
+CURVE = {"enabled": True, "type": "curvedCW", "roundness": 0.25}
+NO_ARROW = {"to": {"enabled": False}}
+PHASE8_EDGE_KEYS = "color,confidence,dashes,from,id,kind,title,to"
+
+
+def test_js_tree_edge_styles(sample_repo, tmp_path, monkeypatch):
+    html = fixture_html(sample_repo)
+    got = run_js(html, "treeEdgeItems().map(e => [e.id, e.kind, e.smooth, "
+                       "e.kind === 'contains' ? [e.color, e.width, e.arrows] : null])")
+    raw = [g for g in got if not g[0].startswith("b:")]
+    assert [g[0] for g in raw] == [e["id"] for e in html_data(html)["edges"]]
+    assert {g[1] for g in raw} == {"contains", "imports", "inherits", "calls"}
+    for _, kind, smooth, look in raw:
+        # contains = the tree's branches (thin grey, no arrow); every other kind bends over the tree
+        assert (smooth, look) == ((BRANCH, ["#b0b0b0", 1, NO_ARROW]) if kind == "contains" else (CURVE, None))
+    # page-only branches folder -> file, same look as contains
+    assert sorted(g for g in got if g[0].startswith("b:")) == [
+        [b, "contains", BRANCH, ["#b0b0b0", 1, NO_ARROW]] for b in FILE_BRANCHES]
+    assert sorted(run_js(html, "BRANCH_EDGES.map(e => [e.id, e.from, e.to])")) == [
+        [b, "dir:app/", b[2:]] for b in FILE_BRANCHES]
+    # Phase 8 dashes and AMBIGUOUS transparency carry over to the Tree copies
+    amb = outputs.graph_html(build(write(tmp_path / "amb", AMB)))
+    assert run_js(amb, 'treeEdgeItems().filter(e => e.confidence && e.confidence !== "EXTRACTED")'
+                       '.map(e => [e.id, e.dashes, e.color])') == [
+        ["e21", [2, 4], {"color": "#f58518", "opacity": 0.5}], ["e22", [8, 6], "#f58518"]]
+    # file-level bundles bend like relations and keep their Phase 8 style
+    lod = fixture_html(sample_repo, monkeypatch, 24)
+    got = run_js(lod, 'treeEdgeItems().filter(e => e.id === "f3").map(e => [e.from, e.to, e.smooth, e.title])')
+    assert got == [["app/service.py", "app/models.py", CURVE,
+                    "app/service.py -> app/models.py: 3 edges "
+                    "(calls 2: EXTRACTED 1, INFERRED 1; imports 1: EXTRACTED 1)"]]
+
+
+def test_js_tree_labels(tmp_path, sample_repo):
+    html = outputs.graph_html(build(write(tmp_path / "nest", NEST)))
+    got = run_js(html, "treeNodeItems().map(n => [n.id, n.label, n.group])")
+    by_id = {i: [label, group] for i, label, group in got}
+    # folder = its name, file = basename (its folder is drawn above it), symbols keep the Phase 8 label
+    assert by_id["dir:pkg/"] == ["pkg", "dir"]
+    assert by_id["dir:pkg/sub/"] == ["sub", "dir"]
+    assert by_id["dir:zz/"] == ["zz", "dir"]
+    assert by_id["pkg/sub/a.py"] == ["a.py", "file"]
+    assert by_id["top.py"] == ["top.py", "file"]
+    assert by_id["top.py::T.m"] == ["T.m", "method"]
+    assert by_id["ext:os"] == ["os", "external"]
+    assert len(got) == len(by_id) == 3 + 11  # 3 folders + every graph node
+    assert run_js(html, "[...DIRS.values()].map(d => d.title).sort()") == ["pkg/", "pkg/sub/", "zz/"]
+    # LLM layer: Tree nodes get the group colours (on) or the kind colours (off); no colour without semantic.json
+    sem = outputs.graph_html(build(sample_repo), SEM)
+    pick = '.filter(n => ["app/service.py::UserService.create", "app/utils.py", "app/__init__.py", "ext:os"]' \
+           '.includes(n.id)).map(n => [n.id, n.color])'
+    assert run_js(sem, "treeNodeItems()" + pick) == [
+        ["app/__init__.py", "#c7c7c7"], ["app/service.py::UserService.create", "#1f77b4"],
+        ["app/utils.py", "#ff7f0e"], ["ext:os", "#bab0ac"]]
+    assert run_js(sem, "(llmOn = false, treeNodeItems()" + pick + ")") == [
+        ["app/__init__.py", "#4c78a8"], ["app/service.py::UserService.create", "#72b7b2"],
+        ["app/utils.py", "#4c78a8"], ["ext:os", "#bab0ac"]]
+    assert run_js(html, 'treeNodeItems().filter(n => "color" in n).length') == 0
+
+
+def test_js_graph_data_untouched(sample_repo):
+    # Graph mode keeps the Phase 8 node and edge objects: no tree labels or curves leak into D
+    html = fixture_html(sample_repo)
+    expr = ("[[...new Set(D.edges.map(e => Object.keys(e).sort().join()))], "
+            "D.nodes.filter(n => n.kind === 'file').map(n => n.label)]")
+    files = ["app/__init__.py", "app/models.py", "app/repository.py", "app/service.py", "app/utils.py"]
+    assert run_js(html, expr) == [[PHASE8_EDGE_KEYS], files]
+    assert run_js(html, f"(treeEdgeItems(), treeNodeItems(), {expr})") == [[PHASE8_EDGE_KEYS], files]
+
+
+def test_template_tree_styles():
+    tpl = outputs.HTML_TEMPLATE
+    for s in ('type: "cubicBezier", forceDirection: "horizontal"', 'type: "curvedCW", roundness: 0.25',
+              "function treeLabel(", "function treeNodeItems(", "function treeEdgeItems(",
+              "function bundleEdge(", "const BRANCH_EDGES", 'dir: {shape: "box"'):
+        assert s in tpl, s
+    # Graph mode still feeds vis the Phase 8 objects with the global `smooth: false`
+    body = fn_body(tpl, "start")
+    for s in ("new vis.DataSet(D.nodes)", "smooth: false"):
+        assert s in body, s
+    for s in ("treeNodeItems", "treeEdgeItems", "cubicBezier", "curvedCW"):
+        assert s not in body, s
+
+
+def test_html_tree_data_unchanged(sample_repo):
+    # folders and curves exist only in the page: the embedded data has no folder ids and no vis styling keys
+    data = html_data(fixture_html(sample_repo))
+    assert not [n for n in data["nodes"] if n["id"].startswith("dir:")]
+    assert {k for e in data["edges"] for k in e} == set(PHASE8_EDGE_KEYS.split(","))
