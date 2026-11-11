@@ -273,6 +273,7 @@ class DataSet {
     list = [].concat(list);
     const real = list.filter(i => !String(i.id).startsWith("dir:"));  // folders have no LLM colour
     if (this === tnodes && real.length) log.push(("x" in real[0] ? "pos" : "") + (real.every(i => "color" in i) ? "+colour" : ""));
+    if (this === nodes && real.length) glog.push(("x" in real[0] ? "pos" : "") + (real.every(i => "color" in i) ? "+colour" : ""));
     for (const i of list) this.m.set(i.id, {...(this.m.get(i.id) || {}), ...i});
   }
   get(ids) { return ids.map(id => this.m.get(id)); }
@@ -282,7 +283,7 @@ class DataView {
   refresh() {}
   getIds() { return [...this.ds.m.values()].filter(this.filter).map(i => i.id); }
 }
-const nets = [], log = [];
+const nets = [], log = [], glog = [];
 class Network {
   constructor(el, data, opts) {
     Object.assign(this, {el, view: data.nodes, opts, calls: [], handlers: {}});
@@ -409,6 +410,24 @@ def test_js_tree_llm_colours(sample_repo):
     plain = fixture_html(sample_repo)
     got = run_modes(plain, 'graphLaidOut(); setMode("tree"); refresh(); return [...new Set(log)];')
     assert got == ["network net", "pos", "network tree"]
+
+
+def test_js_graph_keeps_llm_colours(sample_repo, monkeypatch):
+    # Phase 8 bug fixed with the user's OK: Graph's refresh() wrote positions back without a colour,
+    # so vis re-applied the group style and the LLM colours turned into kind colours on the first
+    # click. With semantic.json every Graph position write-back (ring included) now carries the colour.
+    html = outputs.graph_html(build(sample_repo), SEM)
+    got = run_modes(html, 'graphLaidOut(); glog.length = 0; refresh(); state.kinds.delete("class"); refresh(); '
+                          'return [...new Set(glog)];')
+    assert got == ["pos+colour"]
+    monkeypatch.setattr(outputs, "MAX_HTML_NODES", 24)
+    lod = outputs.graph_html(build(sample_repo), SEM)
+    got = run_modes(lod, 'graphLaidOut(); glog.length = 0; toggleExpand("app/service.py"); refresh(); '
+                         'return [[...new Set(glog)], nodes.m.get("app/service.py::UserService.create").color];')
+    assert got == [["pos+colour"], "#1f77b4"]
+    # without semantic.json Graph never sets a colour (unchanged Phase 8 behaviour)
+    plain = fixture_html(sample_repo)
+    assert run_modes(plain, 'graphLaidOut(); glog.length = 0; refresh(); return [...new Set(glog)];') == ["pos"]
 
 
 def test_template_modes():

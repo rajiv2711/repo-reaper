@@ -294,7 +294,7 @@ function treeLabel(n) {
 }
 
 // Tree mode node items (copies; D.nodes stays as Graph mode uses it): tree labels, then the
-// folders. No colour here: placeTree() sends the LLM colours with every position.
+// folders. No colour here: placeTree() sends the LLM colours with every position (llmColour).
 function treeNodeItems() {
   return D.nodes.map(n => ({...n, label: treeLabel(n)})).concat([...DIRS.values()]);
 }
@@ -533,6 +533,14 @@ function groupIndex(n) {
 function groupHeading() {
   const models = [...new Set(groupRows().map(r => r.model).filter(Boolean))].sort();
   return "Groups - LLM-generated" + (models.length ? ", model " + models.join(", ") : "");
+}
+
+// The colour to send with a node position update (both modes): vis re-applies the group style to a
+// node updated without a colour, so with semantic.json the LLM colour travels with every position.
+// {} without semantic.json and for page-only folders.
+function llmColour(id) {
+  const n = byId.get(id);
+  return D.sem && n ? {color: nodeColor(n, llmOn)} : {};
 }
 
 // Node colour: the group palette while the LLM layer is on (and groups exist), else the kind colour.
@@ -791,7 +799,8 @@ function refresh() {
     });
   }
   placed = new Set(state.expanded);
-  nodes.update(Object.keys(pos).map(id => ({id, x: pos[id].x, y: pos[id].y})).concat(ring));
+  nodes.update(Object.keys(pos).map(id => ({id, x: pos[id].x, y: pos[id].y})).concat(ring)
+    .map(u => ({...u, ...llmColour(u.id)})));
   const V = applyView();
   shown = V;
   if (D.lod) edges.update(D.file_edges.map(f => ({id: f.id, ...bundleStyle(f)})));
@@ -995,14 +1004,9 @@ function startTree() {
 }
 
 // Put the shown nodes and their folders at their tree places (before the views let them in).
-// With semantic.json the LLM colour travels with every position: vis re-applies the group style
-// to a node updated without a colour.
 function placeTree(V) {
   tree = treeLayout(V);
-  tnodes.update(Object.entries(tree.pos).map(([id, p]) => {
-    const n = byId.get(id);
-    return {id, x: p.x, y: p.y, ...(D.sem && n ? {color: nodeColor(n, llmOn)} : {})};
-  }));
+  tnodes.update(Object.entries(tree.pos).map(([id, p]) => ({id, x: p.x, y: p.y, ...llmColour(id)})));
 }
 
 // refresh() in Tree mode: visible sets -> tree positions -> Tree views, legend and status.
