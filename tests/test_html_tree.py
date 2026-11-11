@@ -249,3 +249,172 @@ def test_html_tree_data_unchanged(sample_repo):
     data = html_data(fixture_html(sample_repo))
     assert not [n for n in data["nodes"] if n["id"].startswith("dir:")]
     assert {k for e in data["edges"] for k in e} == set(PHASE8_EDGE_KEYS.split(","))
+
+
+# ---------------------------------------------------------------- Graph | Tree modes (task 3)
+
+# A minimal vis (DataSet / DataView / Network recording its calls) and browser globals, so the real
+# start() (Graph mode, Phase 8) and the mode switch run in node. nets[0] = Graph, nets[1] = Tree.
+FAKE_VIS = """
+globalThis.window = {addEventListener() {}};
+globalThis.location = {hash: HASH, href: "file:///r/graph.html"};
+globalThis.history = {replaceState() {}};
+const els = {};
+const mkEl = id => {
+  const e = stubEl(), cls = new Set(), ls = {};
+  Object.assign(e, {id, clientWidth: 1000, clientHeight: 800, disabled: false, cls, replaceChildren() {},
+    addEventListener: (ev, fn) => { (ls[ev] = ls[ev] || []).push(fn); },
+    click: () => (ls.click || []).forEach(f => f({}))});
+  e.classList = {add: c => cls.add(c), remove: c => cls.delete(c), contains: c => cls.has(c),
+    toggle: (c, on) => ((on === undefined ? !cls.has(c) : on) ? cls.add(c) : cls.delete(c))};
+  return e;
+};
+const getEl = document.getElementById;
+document.getElementById = id => id === "graph-data" ? getEl(id) : (els[id] = els[id] || mkEl(id));
+document.querySelectorAll = () => [];
+document.querySelector = q => mkEl(q);
+document.addEventListener = () => {};
+renderDetails = () => {};
+class DataSet {
+  constructor(items) { this.m = new Map(items.map(i => [i.id, {...i}])); }
+  update(list) { for (const i of [].concat(list)) this.m.set(i.id, {...(this.m.get(i.id) || {}), ...i}); }
+  get(ids) { return ids.map(id => this.m.get(id)); }
+}
+class DataView {
+  constructor(ds, o) { this.ds = ds; this.filter = o.filter; }
+  refresh() {}
+  getIds() { return [...this.ds.m.values()].filter(this.filter).map(i => i.id); }
+}
+const nets = [];
+class Network {
+  constructor(el, data, opts) { Object.assign(this, {el, view: data.nodes, opts, calls: [], handlers: {}}); nets.push(this); }
+  on(ev, fn) { (this.handlers[ev] = this.handlers[ev] || []).push(fn); }
+  once(ev, fn) { this.on(ev, fn); }
+  emit(ev, p) { (this.handlers[ev] || []).forEach(f => f(p || {})); }
+  setOptions(o) { this.calls.push(["setOptions", o]); }
+  getPositions() {
+    const out = {};
+    for (const id of this.view.getIds()) out[id] = {x: this.view.ds.m.get(id).x, y: this.view.ds.m.get(id).y};
+    return out;
+  }
+  fit(o) { this.calls.push(["fit", o ? o.nodes.length : "all"]); }
+  moveTo(o) { this.calls.push(["moveTo", o]); }
+  selectNodes(ids) { this.calls.push(["select", ids]); }
+  unselectAll() { this.calls.push(["unselect"]); }
+}
+globalThis.vis = {DataSet, DataView, Network};
+// rows of a DataSet as shown by its view: [id, x / COL, y / ROW], top-down
+const rowsOf = (ds, view) => view.getIds().map(id => [id, ds.m.get(id).x / COL, ds.m.get(id).y / ROW])
+  .sort((a, b) => a[2] - b[2]);
+const want = () => Object.entries(treeLayout(applyView()).pos).map(([id, p]) => [id, p.x / COL, p.y / ROW])
+  .sort((a, b) => a[2] - b[2]);
+// Graph mode as left by a finished force layout: positions set, first layout done
+const graphLaidOut = () => {
+  start();
+  nodes.update(D.nodes.map((n, i) => ({id: n.id, x: 7 * i, y: -3 * i})));
+  nets[0].emit("stabilizationIterationsDone");
+};
+const graphSnap = () => JSON.stringify([...nodes.m.values()].map(n => [n.id, n.x, n.y, n.label, n.color]));
+"""
+
+
+def run_modes(html, body, hash_=""):
+    return run_js(html, "(() => { " + FAKE_VIS.replace("HASH", json.dumps(hash_)) + body + " })()")
+
+
+def test_js_mode_switch(sample_repo):
+    html = fixture_html(sample_repo)
+    # Graph is the default and is the Phase 8 network; Tree waits for the graph's first layout
+    got = run_modes(html, 'start(); setMode("tree"); return [mode, nets.length, nets[0].opts.physics.solver, '
+                          'els["mode-tree"].disabled, net === nets[0]];')
+    assert got == ["graph", 1, "forceAtlas2Based", True, True]
+    # Tree: its own network (physics off) at the tree positions; the Graph network is left alone
+    # (only its physics switched off), Graph positions and labels unchanged
+    got = run_modes(html, 'graphLaidOut(); const s = graphSnap(); const g0 = nets[0].calls.length; '
+                          'els["mode-tree"].click(); const t = nets[1]; '
+                          'return [mode, net === t, t.opts.physics, t.opts.layout, els.net.cls.has("off"), '
+                          'els.tree.cls.has("off"), rowsOf(tnodes, tnodeView), t.calls, nets[0].calls.slice(g0), '
+                          'graphSnap() === s];')
+    (m, is_tree, physics, layout, net_off, tree_off, pos, tcalls, gcalls, same) = got
+    assert (m, is_tree, physics, layout, net_off, tree_off) == (
+        "tree", True, {"enabled": False}, {"improvedLayout": False}, True, False)
+    assert pos == rows(FIXTURE_TREE)
+    assert tcalls == [["unselect"], ["moveTo", {"position": {"x": 370, "y": 360}, "scale": 1}]]
+    assert gcalls == [["setOptions", {"physics": {"enabled": False}}]]
+    assert same
+    # a filter change in Tree compacts the tree and does not touch the Graph data or network;
+    # back in Graph the Phase 8 refresh applies it with the Graph positions kept
+    got = run_modes(html, 'graphLaidOut(); const s = graphSnap(); setMode("tree"); const g0 = nets[0].calls.length; '
+                          'state.kinds.delete("class"); refresh(); const t = rowsOf(tnodes, tnodeView); '
+                          'const a = [t.length, t[3], JSON.stringify(t) === JSON.stringify(want()), graphSnap() === s, '
+                          'nets[0].calls.length - g0]; '
+                          'setMode("graph"); return [a, mode, net === nets[0], els.net.cls.has("off"), '
+                          'els.tree.cls.has("off"), nodeView.getIds().length, graphSnap() === s, nets[1].calls.slice(-1)];')
+    [a, m, is_graph, net_off, tree_off, n_graph, same, tlast] = got
+    assert a == [22, ["app/models.py::Entity.__init__", 2, 3], True, True, 0]
+    assert (m, is_graph, net_off, tree_off, n_graph, same) == ("graph", True, False, True, 21, True)
+
+
+def test_js_mode_pick_and_fit(sample_repo):
+    html = fixture_html(sample_repo)
+    c = "app/service.py::UserService.create"
+    # pick and Fit act on the shown network only
+    got = run_modes(html, f'graphLaidOut(); setMode("tree"); const g0 = nets[0].calls.length, t0 = nets[1].calls.length; '
+                          f'pick({json.dumps(c)}); els.fit.click(); '
+                          f'return [nets[0].calls.length - g0, nets[1].calls.slice(t0), state.selected];')
+    g_new, tcalls, selected = got
+    assert g_new == 0 and selected == c
+    assert tcalls[0] == ["select", [c]] and tcalls[1][0] == "fit" and tcalls[2] == ["fit", "all"]
+    # back in Graph: the selection made in Tree is selected and its focus fitted (like pick)
+    got = run_modes(html, f'graphLaidOut(); setMode("tree"); pick({json.dumps(c)}); const g0 = nets[0].calls.length; '
+                          'setMode("graph"); return nets[0].calls.slice(g0).map(x => x[0]);')
+    assert got == ["select", "fit"]
+    # first Tree open with a selection made in Graph: fit its focus instead of the top of the tree
+    got = run_modes(html, f'graphLaidOut(); pick({json.dumps(c)}); setMode("tree"); return nets[1].calls.map(x => x[0]);')
+    assert got == ["select", "fit"]
+
+
+def test_js_tree_relayout_and_expand(sample_repo, monkeypatch):
+    html = fixture_html(sample_repo)
+    # Re-layout in Tree puts a dragged node back, never turns physics on (Graph's Re-layout unchanged)
+    got = run_modes(html, 'graphLaidOut(); setMode("tree"); tnodes.update({id: "app/models.py", x: 999, y: 999}); '
+                          'els.relayout.click(); const t = tnodes.m.get("app/models.py"); '
+                          'const tset = nets[1].calls.filter(c => c[0] === "setOptions"); '
+                          'setMode("graph"); const g0 = nets[0].calls.length; els.relayout.click(); '
+                          'return [t.x, t.y, tset, nets[0].calls.slice(g0)];')
+    assert got == [260, 80, [], [["setOptions", {"physics": {"enabled": True}}]]]
+    # file-level view: double-click in Tree expands a file under its row; back in Graph its symbols get
+    # the Phase 8 ring around the file's Graph position
+    lod = fixture_html(sample_repo, monkeypatch, 24)
+    got = run_modes(lod, 'graphLaidOut(); setMode("tree"); nets[1].emit("doubleClick", {nodes: ["app/service.py"]}); '
+                         'const t = rowsOf(tnodes, tnodeView); const ok = JSON.stringify(t) === JSON.stringify(want()); '
+                         'setMode("graph"); const f = nodes.m.get("app/service.py"); '
+                         'const r = symbolsOf.get("app/service.py").map(id => Math.round(Math.hypot(nodes.m.get(id).x - f.x, '
+                         'nodes.m.get(id).y - f.y))); return [t.length, t[5], ok, r];')
+    assert got == [12, ["app/service.py::UserService", 2, 5], True, [84, 84, 84, 84]]
+
+
+def test_js_tree_llm_colours(sample_repo):
+    html = outputs.graph_html(build(sample_repo), SEM)
+    c = "app/service.py::UserService.create"
+    got = run_modes(html, f'graphLaidOut(); setMode("tree"); const on = tnodes.m.get({json.dumps(c)}).color; '
+                          f'setLLM(false); return [on, tnodes.m.get({json.dumps(c)}).color, nodes.m.get({json.dumps(c)}).color];')
+    assert got == ["#1f77b4", "#72b7b2", "#72b7b2"]
+
+
+def test_template_modes():
+    tpl = outputs.HTML_TEMPLATE
+    for s in ('<button id="mode-graph" class="active">Graph</button>', '<button id="mode-tree" disabled',
+              '<div id="tree" class="off"></div>', ".off { visibility: hidden; }", "function setMode(",
+              "function startTree(", "function refreshTree(", "function topView("):
+        assert s in tpl, s
+    assert tpl.count('id="mode-graph"') == tpl.count('id="mode-tree"') == tpl.count('id="tree"') == 1
+    # Graph mode is the Phase 8 network: same options in start(); the mode work is outside it
+    body = fn_body(tpl, "start")
+    for s in ("layout: {improvedLayout: shownNodes <= 150}", 'physics: {solver: "forceAtlas2Based"',
+              "new vis.DataSet(D.nodes)", "initModes();"):
+        assert s in body, s
+    for s in ("treeLayout", "tnodes", "setMode"):
+        assert s not in body, s
+    assert fn_body(tpl, "refresh").startswith('function refresh() {\n  if (mode === "tree") return refreshTree();')
+    assert 'if (mode === "tree")' in fn_body(tpl, "relayout")

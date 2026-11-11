@@ -13,6 +13,11 @@
          gap: 10px; flex-wrap: wrap; align-items: center; }
   #side { grid-column: 1; min-height: 0; overflow: auto; padding: 8px 10px; border-right: 1px solid #ddd; }
   #net { grid-column: 2; min-height: 0; min-width: 0; }
+  /* Graph and Tree share one cell; the hidden one keeps its size, camera and positions. */
+  #net, #tree { grid-row: 2; }
+  #tree { grid-column: 2; min-height: 0; min-width: 0; }
+  .off { visibility: hidden; }
+  .modes button.active { background: #4c78a8; color: #fff; }
   #panel { grid-column: 3; min-height: 0; overflow: auto; padding: 8px 10px; border-left: 1px solid #ddd; }
   #status { color: #555; }
   #status.error { color: #b00020; font-weight: bold; }
@@ -60,6 +65,7 @@
 <body>
 <div id="bar">
   <strong>repo-reaper</strong>
+  <span class="modes"><button id="mode-graph" class="active">Graph</button><button id="mode-tree" disabled title="Editor-style tree, left to right">Tree</button></span>
   <span class="hops">Hops <button data-hops="1" class="active">1</button><button data-hops="2">2</button><button data-hops="3">3</button></span>
   <button id="clear-focus">Clear focus</button>
   <button id="fit">Fit</button>
@@ -91,6 +97,7 @@
   </div>
 </div>
 <div id="net"></div>
+<div id="tree" class="off"></div>
 <div id="panel">
   <div class="tabs"><button id="tab-details">Details</button><button id="tab-arch" class="llm" hidden>Architecture (LLM-generated)</button></div>
   <div id="details"><p class="hint">Select a node to see its details.</p></div>
@@ -214,6 +221,12 @@ let shown = null, placed = new Set();
 let activeTab = "details";
 // LLM layer switch (setLLM); Tree mode colours its nodes from it when it is first built.
 let llmOn = true;
+// Graph | Tree. `net` is the network shown (pick, Fit and the deep link act on it); graphNet is
+// the Phase 8 network, the t* variables are Tree mode's (built on first use); tree =
+// treeLayout(tshown). seenSel = the selection when each mode was last left.
+let mode = "graph", graphNet = null, tnet = null, tnodes = null, tedges = null, tnodeView = null,
+    tedgeView = null, tshown = null, tree = null;
+const seenSel = {graph: null, tree: null};
 
 function fileOf(id) {
   const n = byId.get(id);
@@ -654,8 +667,10 @@ function renderDetails(id) {
 // One switch for the whole LLM layer: every .llm element (file summaries, group legend,
 // Architecture tab) and the group colours; off = structural kind colours.
 function setLLM(on) {
+  llmOn = on;
   document.body.classList.toggle("llm-off", !on);
   nodes.update(D.nodes.map(n => ({id: n.id, color: nodeColor(n, on)})));
+  if (tnodes) tnodes.update(D.nodes.map(n => ({id: n.id, color: nodeColor(n, on)})));
   if (!on && activeTab === "arch") showTab("details");
 }
 
@@ -761,7 +776,9 @@ function renderLegend(V) {
 
 // Re-apply state to the network: ring-place the symbols of newly expanded files, remember
 // where loaded nodes are, recompute the visible sets, refresh the views, legend and status.
+// Tree mode has its own refresh (tree positions, Tree DataSets).
 function refresh() {
+  if (mode === "tree") return refreshTree();
   const pos = net.getPositions();
   const ring = [];
   for (const file of state.expanded) {
@@ -792,7 +809,12 @@ function clearFocus() {
 }
 
 // The only place physics is switched on again; it goes off once stable or after RELAYOUT_MS.
+// In Tree mode Re-layout re-applies the tree positions instead (physics stays off there).
 function relayout() {
+  if (mode === "tree") {
+    refresh();
+    return;
+  }
   const stop = () => net.setOptions({physics: {enabled: false}});
   net.setOptions({physics: {enabled: true}});
   net.once("stabilized", stop);
@@ -901,6 +923,94 @@ function start() {
     setLLM(true);
     box.addEventListener("change", ev => setLLM(ev.target.checked));
   }
+  initModes();
+}
+
+// ---------------------------------------------------------------- Tree mode (Graph | Tree buttons)
+
+// Graph | Tree buttons. Tree is enabled once the graph's first layout is done, so the Phase 8
+// stabilization handler always runs while Graph is shown.
+function initModes() {
+  const treeButton = document.getElementById("mode-tree");
+  treeButton.disabled = true;
+  net.once("stabilizationIterationsDone", () => { treeButton.disabled = false; });
+  document.getElementById("mode-graph").addEventListener("click", () => setMode("graph"));
+  treeButton.addEventListener("click", () => setMode("tree"));
+}
+
+// moveTo options that open a w x h canvas like an editor: graph point (-COL/2, -ROW) (just above
+// and left of the first row) at the top-left corner, 100% zoom.
+function topView(w, h) {
+  return {position: {x: w / 2 - COL / 2, y: h / 2 - ROW}, scale: 1};
+}
+
+// Show Graph or Tree. The view left keeps its camera and positions (leaving Graph switches its
+// physics off, which stops a running Re-layout). The view shown is synced to the shared state
+// (refresh), gets the selection and, when the selection changed while it was hidden, fits the
+// focus like pick(); Tree is built on first use and then opens at the top of the tree.
+function setMode(m) {
+  if (m === mode || (m === "tree" && document.getElementById("mode-tree").disabled)) return;
+  seenSel[mode] = state.selected;
+  if (mode === "graph") {
+    graphNet = net;
+    net.setOptions({physics: {enabled: false}});
+  }
+  mode = m;
+  document.getElementById("net").classList.toggle("off", m !== "graph");
+  document.getElementById("tree").classList.toggle("off", m !== "tree");
+  document.getElementById("mode-graph").classList.toggle("active", m === "graph");
+  document.getElementById("mode-tree").classList.toggle("active", m === "tree");
+  const first = m === "tree" && !tnet;
+  if (first) startTree();
+  net = m === "tree" ? tnet : graphNet;
+  const V = refresh();
+  if (V.nodes.has(state.selected)) net.selectNodes([state.selected]);
+  else net.unselectAll();
+  if (state.selected !== seenSel[m] && fitIds(V).length) {
+    net.fit({nodes: fitIds(V)});
+  } else if (first) {
+    const box = document.getElementById("tree");
+    net.moveTo(topView(box.clientWidth, box.clientHeight));
+  }
+}
+
+// Tree mode's own DataSets, views and network (physics off, positions from treeLayout).
+function startTree() {
+  tnodes = new vis.DataSet(treeNodeItems());
+  tedges = new vis.DataSet(treeEdgeItems());
+  tshown = applyView();
+  placeTree(tshown);
+  tnodeView = new vis.DataView(tnodes, {filter: n => tshown.nodes.has(n.id) || tree.dirs.has(n.id)});
+  tedgeView = new vis.DataView(tedges, {filter: e => tshown.raw.has(e.id) || tshown.agg.has(e.id) ||
+                                                     tree.branches.has(e.id)});
+  tnet = new vis.Network(document.getElementById("tree"), {nodes: tnodeView, edges: tedgeView}, {
+    layout: {improvedLayout: false},
+    physics: {enabled: false},
+    edges: {arrows: {to: {enabled: true, scaleFactor: 0.5}}, smooth: false},
+    nodes: {shape: "dot", size: 10, font: {size: 12}},
+    groups: TREE_GROUPS,
+    interaction: {hover: true, tooltipDelay: 150, hideEdgesOnDrag: D.lod, hideEdgesOnZoom: D.lod}
+  });
+  tnet.on("doubleClick", p => { if (p.nodes.length && toggleExpand(p.nodes[0]) !== null) refresh(); });
+  tnet.on("click", p => { if (p.nodes.length) pick(p.nodes[0], false); });
+}
+
+// Put the shown nodes and their folders at their tree places (before the views let them in).
+function placeTree(V) {
+  tree = treeLayout(V);
+  tnodes.update(Object.entries(tree.pos).map(([id, p]) => ({id, x: p.x, y: p.y})));
+}
+
+// refresh() in Tree mode: visible sets -> tree positions -> Tree views, legend and status.
+function refreshTree() {
+  const V = applyView();
+  tshown = V;
+  placeTree(V);
+  if (D.lod) tedges.update(D.file_edges.map(f => ({id: f.id, ...bundleStyle(f)})));
+  tnodeView.refresh();
+  tedgeView.refresh();
+  renderLegend(V);
+  return V;
 }
 
 // vis from unpkg (static tag above); if it did not load, try jsDelivr once, then say so.
