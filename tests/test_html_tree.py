@@ -207,17 +207,9 @@ def test_js_tree_labels(tmp_path, sample_repo):
     assert by_id["ext:os"] == ["os", "external"]
     assert len(got) == len(by_id) == 3 + 11  # 3 folders + every graph node
     assert run_js(html, "[...DIRS.values()].map(d => d.title).sort()") == ["pkg/", "pkg/sub/", "zz/"]
-    # LLM layer: Tree nodes get the group colours (on) or the kind colours (off); no colour without semantic.json
+    # no colour on the items: vis would let the group style override a colour given at add time
     sem = outputs.graph_html(build(sample_repo), SEM)
-    pick = '.filter(n => ["app/service.py::UserService.create", "app/utils.py", "app/__init__.py", "ext:os"]' \
-           '.includes(n.id)).map(n => [n.id, n.color])'
-    assert run_js(sem, "treeNodeItems()" + pick) == [
-        ["app/__init__.py", "#c7c7c7"], ["app/service.py::UserService.create", "#1f77b4"],
-        ["app/utils.py", "#ff7f0e"], ["ext:os", "#bab0ac"]]
-    assert run_js(sem, "(llmOn = false, treeNodeItems()" + pick + ")") == [
-        ["app/__init__.py", "#4c78a8"], ["app/service.py::UserService.create", "#72b7b2"],
-        ["app/utils.py", "#4c78a8"], ["ext:os", "#bab0ac"]]
-    assert run_js(html, 'treeNodeItems().filter(n => "color" in n).length') == 0
+    assert run_js(sem, 'treeNodeItems().filter(n => "color" in n).length') == 0
 
 
 def test_js_graph_data_untouched(sample_repo):
@@ -277,7 +269,12 @@ document.addEventListener = () => {};
 renderDetails = () => {};
 class DataSet {
   constructor(items) { this.m = new Map(items.map(i => [i.id, {...i}])); }
-  update(list) { for (const i of [].concat(list)) this.m.set(i.id, {...(this.m.get(i.id) || {}), ...i}); }
+  update(list) {
+    list = [].concat(list);
+    const real = list.filter(i => !String(i.id).startsWith("dir:"));  // folders have no LLM colour
+    if (this === tnodes && real.length) log.push(("x" in real[0] ? "pos" : "") + (real.every(i => "color" in i) ? "+colour" : ""));
+    for (const i of list) this.m.set(i.id, {...(this.m.get(i.id) || {}), ...i});
+  }
   get(ids) { return ids.map(id => this.m.get(id)); }
 }
 class DataView {
@@ -285,9 +282,13 @@ class DataView {
   refresh() {}
   getIds() { return [...this.ds.m.values()].filter(this.filter).map(i => i.id); }
 }
-const nets = [];
+const nets = [], log = [];
 class Network {
-  constructor(el, data, opts) { Object.assign(this, {el, view: data.nodes, opts, calls: [], handlers: {}}); nets.push(this); }
+  constructor(el, data, opts) {
+    Object.assign(this, {el, view: data.nodes, opts, calls: [], handlers: {}});
+    nets.push(this);
+    log.push("network " + el.id);
+  }
   on(ev, fn) { (this.handlers[ev] = this.handlers[ev] || []).push(fn); }
   once(ev, fn) { this.on(ev, fn); }
   emit(ev, p) { (this.handlers[ev] || []).forEach(f => f(p || {})); }
@@ -396,10 +397,18 @@ def test_js_tree_relayout_and_expand(sample_repo, monkeypatch):
 
 def test_js_tree_llm_colours(sample_repo):
     html = outputs.graph_html(build(sample_repo), SEM)
-    c = "app/service.py::UserService.create"
-    got = run_modes(html, f'graphLaidOut(); setMode("tree"); const on = tnodes.m.get({json.dumps(c)}).color; '
-                          f'setLLM(false); return [on, tnodes.m.get({json.dumps(c)}).color, nodes.m.get({json.dumps(c)}).color];')
-    assert got == ["#1f77b4", "#72b7b2", "#72b7b2"]
+    c = json.dumps("app/service.py::UserService.create")
+    # vis re-applies the group style to a node updated without a colour, so with semantic.json every
+    # Tree position update carries the LLM colour; setLLM recolours both modes and Tree keeps it
+    got = run_modes(html, f'graphLaidOut(); setMode("tree"); const on = tnodes.m.get({c}).color; '
+                          f'setLLM(false); refresh(); const off = tnodes.m.get({c}).color; '
+                          f'setLLM(true); state.kinds.delete("class"); refresh(); '
+                          f'return [[...new Set(log.filter(x => x !== "network net"))], on, off, tnodes.m.get({c}).color];')
+    assert got == [["pos+colour", "network tree", "+colour"], "#1f77b4", "#72b7b2", "#1f77b4"]
+    # without semantic.json Tree never sets a colour (the group styles colour by kind)
+    plain = fixture_html(sample_repo)
+    got = run_modes(plain, 'graphLaidOut(); setMode("tree"); refresh(); return [...new Set(log)];')
+    assert got == ["network net", "pos", "network tree"]
 
 
 def test_template_modes():

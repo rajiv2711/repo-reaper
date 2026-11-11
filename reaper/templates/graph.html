@@ -293,11 +293,10 @@ function treeLabel(n) {
   return n.kind === "file" ? baseName(n.id) : n.label;
 }
 
-// Tree mode node items (copies; D.nodes stays as Graph mode uses it): tree labels, the LLM colours
-// when semantic.json is present, then the folders.
+// Tree mode node items (copies; D.nodes stays as Graph mode uses it): tree labels, then the
+// folders. No colour here: placeTree() sends the LLM colours with every position.
 function treeNodeItems() {
-  return D.nodes.map(n => ({...n, label: treeLabel(n), ...(D.sem ? {color: nodeColor(n, llmOn)} : {})}))
-    .concat([...DIRS.values()]);
+  return D.nodes.map(n => ({...n, label: treeLabel(n)})).concat([...DIRS.values()]);
 }
 
 // A file-level bundle as a Tree mode edge: bends like a relation, styled by bundleStyle().
@@ -996,9 +995,14 @@ function startTree() {
 }
 
 // Put the shown nodes and their folders at their tree places (before the views let them in).
+// With semantic.json the LLM colour travels with every position: vis re-applies the group style
+// to a node updated without a colour.
 function placeTree(V) {
   tree = treeLayout(V);
-  tnodes.update(Object.entries(tree.pos).map(([id, p]) => ({id, x: p.x, y: p.y})));
+  tnodes.update(Object.entries(tree.pos).map(([id, p]) => {
+    const n = byId.get(id);
+    return {id, x: p.x, y: p.y, ...(D.sem && n ? {color: nodeColor(n, llmOn)} : {})};
+  }));
 }
 
 // refresh() in Tree mode: visible sets -> tree positions -> Tree views, legend and status.
