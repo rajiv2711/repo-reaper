@@ -120,6 +120,13 @@ const NO_GROUP_COLOR = "#c7c7c7";
 const DEBOUNCE_MS = 120;
 const JSDELIVR_URL = "https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js";
 const JSDELIVR_SRI = "sha384-yxKDWWf0wwdUj/gPeuL11czrnKFQROnLgY8ll7En9NYoXibgg3C6NK/UDHNtUgWJ";
+// Tree mode: one column per depth (x), one row per shown node in tree order (y). ROW leaves room
+// for the label under a dot.
+const COL = 260;
+const ROW = 40;
+// Tree mode's page-only folder nodes (never in graph.json) have ids "dir:<path>/"; real ids never
+// start with "dir:".
+const DIR_PREFIX = "dir:";
 
 // INFERRED and AMBIGUOUS are drawn differently: own dash pattern, AMBIGUOUS also half transparent.
 for (const e of D.edges) {
@@ -146,6 +153,25 @@ for (const n of D.nodes) {
   if (!SYMBOL_KINDS.has(n.kind) || !n.file) continue;
   if (!symbolsOf.has(n.file)) symbolsOf.set(n.file, []);
   symbolsOf.get(n.file).push(n.id);
+}
+// Tree mode: page-only folders (id -> vis node) and each node's tree parent: the contains edge
+// source (file -> class/function, class -> method), a file's folder, a folder's parent folder.
+const DIRS = new Map();
+const parentOf = new Map();
+for (const n of D.nodes) {
+  if (n.kind !== "file") continue;
+  const parts = n.id.split("/");
+  let child = n.id;
+  for (let k = parts.length - 1; k > 0; k--) {
+    const dir = DIR_PREFIX + parts.slice(0, k).join("/") + "/";
+    parentOf.set(child, dir);
+    if (DIRS.has(dir)) break;
+    DIRS.set(dir, {id: dir, label: parts[k - 1], group: "dir", title: dir.slice(DIR_PREFIX.length)});
+    child = dir;
+  }
+}
+for (const e of D.edges) {
+  if (e.kind === "contains") parentOf.set(e.to, e.from);
 }
 
 // Panel relation sections: edge kind -> [section for the source, section for the target].
@@ -222,6 +248,75 @@ function applyView() {
     }
   }
   return {nodes: vn, raw, agg};
+}
+
+function baseName(id) {
+  return id.slice(id.lastIndexOf("/") + 1);
+}
+
+// Tree mode sibling order: folders, then files (A-Z by lower-case name, then exact name), then
+// symbols in source order (file, line, id).
+function treeKey(id) {
+  const d = DIRS.get(id);
+  if (d) return [0, d.label.toLowerCase(), d.label];
+  const n = byId.get(id);
+  if (n.kind === "file") return [1, baseName(n.id).toLowerCase(), baseName(n.id)];
+  return [2, n.file || "", n.line || 0, n.id];
+}
+
+function keyCmp(a, b) {
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] < b[i]) return -1;
+    if (a[i] > b[i]) return 1;
+  }
+  return 0;
+}
+
+function byTree(ids) {
+  return ids.map(id => [treeKey(id), id]).sort((a, b) => keyCmp(a[0], b[0])).map(x => x[1]);
+}
+
+// Tree mode positions of the visible sets V (pure): depth-first over folders -> files -> classes
+// and functions -> methods; x = depth * COL, y = row * ROW. A node whose parent is hidden hangs
+// under its nearest visible ancestor; a folder is shown when it holds a shown node. Externals form
+// one block after a blank row. branches = page-only folder -> subfolder / file edges
+// ("b:<child id>"), only while "contains" is enabled. Returns {pos: {id: {x, y}}, dirs, branches}.
+function treeLayout(V) {
+  const kids = new Map(), roots = [], ext = [], dirs = new Set(), branches = new Set();
+  const hang = id => {
+    let p = parentOf.get(id);
+    while (p !== undefined && !V.nodes.has(p) && !DIRS.has(p)) p = parentOf.get(p);
+    if (p === undefined) {
+      roots.push(id);
+      return;
+    }
+    if (!kids.has(p)) kids.set(p, []);
+    kids.get(p).push(id);
+    if (!DIRS.has(p)) return;
+    if (state.ekinds.has("contains") && (DIRS.has(id) || byId.get(id).kind === "file")) branches.add("b:" + id);
+    if (!dirs.has(p)) {
+      dirs.add(p);
+      hang(p);
+    }
+  };
+  for (const id of V.nodes) {
+    if (byId.get(id).kind === "external") ext.push(id);
+    else hang(id);
+  }
+  const pos = {};
+  let row = 0;
+  const walk = (id, depth) => {
+    pos[id] = {x: depth * COL, y: row * ROW};
+    row += 1;
+    for (const k of byTree(kids.get(id) || [])) walk(k, depth + 1);
+  };
+  for (const id of byTree(roots)) walk(id, 0);
+  if (row && ext.length) row += 1;
+  for (const id of ext.sort()) {
+    pos[id] = {x: 0, y: row * ROW};
+    row += 1;
+  }
+  return {pos, dirs, branches};
 }
 
 // Look of a file-level bundle from its enabled edges (follows the filters like the legend):
