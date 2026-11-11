@@ -13,22 +13,17 @@ What changed (reaper/templates/graph.html only; outputs.py, graph.json, semantic
   "dir:<path>/" and branches "b:<child>". Look: contains + branches grey cubicBezier (horizontal), no arrow;
   relations and bundles curvedCW 0.25 with the Phase 8 colours/dashes. Labels: folder name, file basename, symbols
   as in Phase 8. First Tree open: top of the tree at 100% (or the focus, if something is selected).
-- Phase 8 bug fixed (user-approved): vis re-applies the group style to a node updated without a colour, so Graph's
-  refresh() turned LLM group colours into kind colours on the first click/filter. llmColour(id) now travels with
-  every position update in both modes. Seen in headless Chrome: 21ba424 "load #d62728 | after refresh #4c78a8";
-  now "#d62728" after refresh, filter off/on, LLM on; "#4c78a8" with LLM off.
+- Phase 8 bug fixed (user-approved): vis re-applies the group style on colourless node updates, so Graph lost its
+  LLM colours on the first refresh (21ba424: #d62728 -> #4c78a8). llmColour(id) now rides every position update.
 
-Tests: tests/test_html_tree.py, 15 new (fixture order written by hand before coding; mode tests run the real
-start() with a fake vis that records calls per network). Phase 5/8 test files unchanged
-(`git diff 21ba424 -- tests/test_html_template.py tests/test_outputs.py` is empty). Own-test corrections during the
-work (not expected-value tweaks to pass code): two node-count slips (fixture has 25 nodes), the AMB repo needed its
-own folder, a colour check that tested vis items instead of what vis draws was replaced by the update-order check.
+Tests: tests/test_html_tree.py, 15 new (fixture order hand-written first; mode tests run the real start() with a
+fake vis recording calls per network). Phase 5/8 test files unchanged (git diff 21ba424 on them is empty). Fixed in
+my own new tests: two node-count slips (25 nodes), AMB repo folder, a colour test that checked items, not drawing.
 Result: REAPER_REQUIRE_NODE=1 conda run -n repo-reaper pytest -q -> 213 passed. Headless Chrome: 0 console
 messages, Graph and Tree, on this repo (448 nodes) and the synthetic repo (7201 nodes, file-level view).
 
-Known behaviour: folders are page-only (not in legend counts); under hop focus in Tree a symbol whose file is
-hidden hangs under its folder; long relation curves bulge (0.25 x length) in Tree's Fit view; file order is plain
-A-Z (m1, m10, m100, m2); the mode is not part of the deep link (links open in Graph).
+Known behaviour: folders not in legend counts; in Tree under hop focus a symbol with a hidden file hangs under its
+folder; long relation curves bulge in Tree's Fit view; plain A-Z (m1, m10, m100); deep links open in Graph.
 
 Browser checklist (this repo, then the synthetic repo)
 1. Opens in Graph exactly as before (force layout, group colours); Graph highlighted; Tree enabled once laid out.
