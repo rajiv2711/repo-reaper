@@ -30,6 +30,7 @@ reaper/outputs.py      tree, summary, html, query
 reaper/llm.py          Ollama client
 reaper/enrich.py       semantic passes
 tests/fixtures/sample_py/   small known repo used by all tests
+docs/phases/NN-slug/   GSD-style phase docs (Phase 8+): NN-CONTEXT, NN-RESEARCH, NN-PLAN, NN-*-SUMMARY, NN-VERIFICATION
 
 ## Data format (output dir: <repo>/.reaper/)
 graph.json:
@@ -88,7 +89,22 @@ picks most-connected files first. --dry-run prints call count and approx tokens 
 group summaries + cross-group edge counts + most-connected nodes -> {overview, patterns: [{name, explanation, evidence: [node ids]}], decisions: [...]}. Drop evidence ids not in graph.json. Write 
 ARCHITECTURE.md marked "LLM-generated".
   Accept: mocked tests, including a fake evidence id being dropped; a manual run on this repo works.
-- [ ] Phase 8 (optional): More languages via tree-sitter-language-pack, same extract contract.
+- [ ] Phase 8: Interactive HTML view (GSD-style; docs in docs/phases/08-html-view/)
+  Goal: graph.html becomes the way to explore a mapped repo: find any symbol, see what it is, what touches it and what the LLM layer says about it, on repos of any size.
+  Depends on: Phase 5 (graph.html), Phase 7 (semantic.json). Locked decisions: docs/phases/08-html-view/08-CONTEXT.md (D-xx); later steps never contradict them.
+  Requirements: VIEW-01 search (id, name, signature; ranked list as you type). VIEW-02 click -> side panel (kind, signature, file:line, doc, file summary + role, callers/callees/imports/imported-by/bases with confidence, all clickable).
+  VIEW-03 focus on a node's 1-3 hop neighbourhood. VIEW-04 filters by node kind, edge kind and confidence (INFERRED and AMBIGUOUS drawn differently), plus a legend with counts.
+  VIEW-05 semantic layer when .reaper/semantic.json exists: group colours, summaries, architecture tab whose evidence ids focus their nodes, stale entries marked. Without semantic.json the page is the structural view and shows no LLM text.
+  VIEW-06 big repos: level of detail (file-level view with aggregated edges, expand a file) instead of the all-or-nothing files-only cut; the layout stops after it stabilizes. VIEW-07 safety: data text reaches the DOM only via textContent, template filled in one pass, a visible message when the CDN script fails.
+  Success (must be TRUE):
+    1. On this repo, typing "run_gr" lists reaper/enrich.py::run_groups; picking it focuses the node, and the panel shows its signature, doc, file summary and clickable callers/callees.
+    2. Hop focus (1-3) and the node-kind, edge-kind and confidence filters combine, and the legend counts match what is shown.
+    3. With semantic.json, nodes are coloured by group and every architecture evidence id focuses its node. With semantic.json absent, `reaper export` still works and the page has no LLM text.
+    4. A synthetic repo above the size budget opens as a file-level view with aggregated edges; a file expands to its symbols; the CPU goes idle once the layout settles.
+    5. A docstring or summary containing "<b>x</b></script>" is shown as plain text.
+  Accept: pytest checks on the generated HTML pass (data contract, UI hooks, escaping, degrade mode, with and without semantic.json); the Phase 5 html tests are unchanged unless a locked decision replaces them; 08-VERIFICATION.md says status: passed; the user confirmed the browser checklist.
+  Workflow: discuss -> research -> plan -> execute -> verify. Each step writes its file in docs/phases/08-html-view/; a resumed session continues at the first missing file.
+- [ ] Phase 9 (optional): More languages via tree-sitter-language-pack, same extract contract. (was Phase 8; renumbered when Phase 8 "Interactive HTML view" was inserted)
 
 ## Session protocol
 Start: read HANDOFF.md; run `git log --oneline -5` and `conda run -n repo-reaper pytest -q`; say "This session: Phase N". Work on the phase HANDOFF.md marks partial, else the first unchecked phase. Only that 

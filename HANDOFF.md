@@ -17,8 +17,7 @@ Phase 7 | status: done
 - Manual run on this repo: files 24 calls 2m10s; groups 6 calls 21s; architecture 1 call 10s, 0 ids dropped; re-runs 0 calls.
 
 ## Exact next step
-Phase 8 (optional): tree-sitter-language-pack, same extract contract (needs a HANDOFF note for the new dependency).
-Or stop here: Phases 1-7 are complete.
+Phase 8: Interactive HTML view (GSD-style, docs/phases/08-html-view/). Phase 9 (optional) = tree-sitter.
 ## Blockers: none
 Proposals only: rank tests last in --limit; resolve misses fixture imports when repo is not the fixture root (utils.py isolated here).
 
