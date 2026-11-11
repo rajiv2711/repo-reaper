@@ -193,15 +193,20 @@ def test_html_dashed_when_not_extracted(sample_repo):
     assert sum(e["dashes"] for e in edges) == 4  # the 4 INFERRED calls
 
 
-def test_html_large_graph_shows_files_only(sample_repo, monkeypatch):
+# Phase 8 D-03 replaced test_html_large_graph_shows_files_only
+def test_html_large_graph_opens_file_level(sample_repo, monkeypatch):
     monkeypatch.setattr(outputs, "MAX_HTML_NODES", 24)  # fixture has 25 nodes
     html = outputs.graph_html(build(sample_repo))
     data = html_data(html)
-    assert sorted(n["id"] for n in data["nodes"]) == [
+    assert data["lod"] is True
+    assert len(data["nodes"]) == 25  # everything is embedded; the page starts at file level
+    assert len(data["edges"]) == 39
+    assert sorted(n["id"] for n in data["nodes"] if n["group"] in ("file", "external")) == [
         "app/__init__.py", M, R, S, U, "ext:json", "ext:os"]
-    assert {e["kind"] for e in data["edges"]} == {"imports"}
-    assert len(data["edges"]) == 8
-    assert data["note"] == "files only: 18 symbols hidden (graph has 25 nodes, limit 24)"
+    assert len(data["file_edges"]) == 8
+    assert sum(f["count"] for f in data["file_edges"]) == 15
+    assert data["note"] == ("file-level view: graph has 25 nodes and 39 edges (budget 24 nodes, "
+                            "5000 edges); double-click a file to expand it")
 
 
 def test_html_escapes_script_end_in_docs(tmp_path):

@@ -9,8 +9,10 @@ ownership) and external packages (listed separately) are left out.
 
 from __future__ import annotations
 
+import importlib.resources
 import json
 import os
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -24,7 +26,10 @@ EDGE_KINDS = ("contains", "imports", "inherits", "calls")
 CONFIDENCES = ("EXTRACTED", "INFERRED", "AMBIGUOUS")
 TOP_N = 10
 MAX_LISTED_FILES = 5
-MAX_HTML_NODES = 3000  # above this, graph.html shows files + external packages only
+# Level-of-detail budget: above either, graph.html opens a file-level view (bundled
+# file -> file edges) and the user expands files one by one. Read at call time.
+MAX_HTML_NODES = 1500
+MAX_HTML_EDGES = 5000
 VIS_NETWORK_URL = "https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
 
 
@@ -196,71 +201,17 @@ def summary_md(graph: dict) -> str:
 EDGE_COLORS = {"contains": "#b0b0b0", "imports": "#4c78a8", "inherits": "#b279a2",
                "calls": "#f58518"}
 
-HTML_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>repo-reaper graph</title>
-<script src="__VIS__"></script>
-<style>
-  html, body { margin: 0; height: 100%; font: 14px system-ui, sans-serif; background: #fff; }
-  #bar { padding: 6px 10px; border-bottom: 1px solid #ddd; display: flex; gap: 14px;
-         flex-wrap: wrap; align-items: center; }
-  #net { position: absolute; top: 44px; bottom: 0; left: 0; right: 0; }
-  #info { color: #555; }
-  .k { display: inline-block; width: 18px; border-top: 3px solid; vertical-align: middle; }
-  .d { border-top-style: dashed; }
-</style>
-</head>
-<body>
-<div id="bar">
-  <strong>repo-reaper</strong>
-  <label><input type="checkbox" data-kind="contains" checked> <span class="k" style="border-color:#b0b0b0"></span> contains</label>
-  <label><input type="checkbox" data-kind="imports" checked> <span class="k" style="border-color:#4c78a8"></span> imports</label>
-  <label><input type="checkbox" data-kind="inherits" checked> <span class="k" style="border-color:#b279a2"></span> inherits</label>
-  <label><input type="checkbox" data-kind="calls" checked> <span class="k" style="border-color:#f58518"></span> calls</label>
-  <span><span class="k d" style="border-color:#555"></span> not EXTRACTED (INFERRED / AMBIGUOUS)</span>
-  <input id="find" placeholder="find node..." size="24">
-  <span id="info"></span>
-</div>
-<div id="net"></div>
-<script id="graph-data" type="application/json">__DATA__</script>
-<script>
-const data = JSON.parse(document.getElementById("graph-data").textContent);
-const nodes = new vis.DataSet(data.nodes);
-const edges = new vis.DataSet(data.edges);
-const shown = {contains: true, imports: true, inherits: true, calls: true};
-const view = new vis.DataView(edges, {filter: e => shown[e.kind]});
-const big = data.nodes.length > 300;
-const net = new vis.Network(document.getElementById("net"), {nodes, edges: view}, {
-  layout: {improvedLayout: !big},
-  physics: {solver: "forceAtlas2Based", stabilization: {iterations: big ? 100 : 300}},
-  edges: {arrows: {to: {enabled: true, scaleFactor: 0.5}}, smooth: false},
-  nodes: {shape: "dot", size: 10, font: {size: 12}},
-  groups: {
-    file: {color: "#4c78a8", size: 16, shape: "box", font: {color: "#fff"}},
-    class: {color: "#b279a2"}, function: {color: "#54a24b"}, method: {color: "#72b7b2"},
-    external: {color: "#bab0ac", shape: "diamond"}
-  },
-  interaction: {hover: true, tooltipDelay: 150}
-});
-document.getElementById("info").textContent =
-  data.nodes.length + " nodes, " + data.edges.length + " edges" + (data.note ? " - " + data.note : "");
-document.querySelectorAll("input[data-kind]").forEach(cb => cb.addEventListener("change", () => {
-  shown[cb.dataset.kind] = cb.checked; view.refresh();
-}));
-document.getElementById("find").addEventListener("keydown", ev => {
-  if (ev.key !== "Enter") return;
-  const q = ev.target.value.trim().toLowerCase();
-  const hit = data.nodes.find(n => n.id.toLowerCase() === q)
-           || data.nodes.find(n => n.id.toLowerCase().includes(q));
-  if (hit) { net.selectNodes([hit.id]); net.focus(hit.id, {scale: 1.2, animation: true}); }
-});
-</script>
-</body>
-</html>
-"""
+# Page template (package data); __VIS__ and __DATA__ are its only slots, filled in one pass.
+_TEMPLATE_FILE = importlib.resources.files("reaper").joinpath("templates/graph.html")
+HTML_TEMPLATE = _TEMPLATE_FILE.read_text(encoding="utf-8")
+
+
+def _fill(blob: str) -> str:
+    """Fill the template slots in ONE pass: text put into a slot is never scanned again,
+    so "__DATA__" inside the URL or "__VIS__" inside a docstring stays as it is.
+    An unknown slot in the template raises KeyError."""
+    slots = {"VIS": VIS_NETWORK_URL, "DATA": blob}
+    return re.sub(r"__([A-Z]+)__", lambda m: slots[m.group(1)], HTML_TEMPLATE)
 
 
 def _vis_node(n: dict) -> dict:
@@ -284,33 +235,72 @@ def _vis_edge(e: dict) -> dict:
             "title": f"{e['kind']} ({e['confidence']})"}
 
 
-def graph_html(graph: dict) -> str:
+def file_edges(graph: dict) -> list[dict]:
+    """Non-contains edges bundled per (file, file) pair for the file-level view.
+
+    Each end maps to its node's file (externals map to themselves); same-file pairs are left
+    out. Items {id: "f<i>", from, to, count, counts: {kind: {confidence: n}}}, sorted by
+    (from, to).
+    """
+    file_of = {n["id"]: n.get("file") or n["id"] for n in graph["nodes"]}
+    counts: dict[tuple[str, str], dict[str, Counter]] = defaultdict(lambda: defaultdict(Counter))
+    for e in graph["edges"]:
+        if e["kind"] == "contains":
+            continue
+        a, b = file_of.get(e["src"], e["src"]), file_of.get(e["dst"], e["dst"])
+        if a != b:
+            counts[(a, b)][e["kind"]][e["confidence"]] += 1
+    return [{"id": f"f{i}", "from": a, "to": b,
+             "count": sum(sum(c.values()) for c in by_kind.values()),
+             "counts": {k: dict(c) for k, c in sorted(by_kind.items())}}
+            for i, ((a, b), by_kind) in enumerate(sorted(counts.items()))]
+
+
+def _page_node(n: dict, deg: dict[str, tuple[int, int]]) -> dict:
+    """_vis_node plus the graph fields the page searches and shows (add-only, no LLM text)."""
+    return {**_vis_node(n), "kind": n["kind"], "name": n.get("name"), "file": n.get("file"),
+            "line": n.get("line"), "signature": n.get("signature"), "doc": n.get("doc"),
+            "deg": sum(deg.get(n["id"], (0, 0)))}
+
+
+def graph_html(graph: dict, sem: dict | None = None) -> str:
     """Single-file interactive view (vis-network from unpkg); dashed edges = not EXTRACTED.
 
-    Above MAX_HTML_NODES nodes the browser cannot lay the graph out usefully, so only file
-    and external nodes (and the edges between them) are drawn, with a note saying so.
+    All nodes and edges are always embedded. Above MAX_HTML_NODES nodes or MAX_HTML_EDGES
+    edges ("lod") the page opens at file level with the bundled file_edges() and expands
+    files on demand. `sem` is the semantic layer built by the caller (None = structural view
+    only); it is passed through as data, never merged into node labels or titles.
     """
-    nodes, note = graph["nodes"], ""
-    if len(nodes) > MAX_HTML_NODES:
-        nodes = [n for n in nodes if n["kind"] in ("file", "external")]
-        note = (f"files only: {len(graph['nodes']) - len(nodes)} symbols hidden "
-                f"(graph has {len(graph['nodes'])} nodes, limit {MAX_HTML_NODES})")
-    keep = {n["id"] for n in nodes}
-    data = {"note": note, "nodes": [_vis_node(n) for n in nodes],
-            "edges": [_vis_edge(e) for e in graph["edges"]
-                      if e["src"] in keep and e["dst"] in keep]}
-    # "<" escaped so no source text (e.g. a docstring with "</script>") can end the data block
-    blob = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")
-    return HTML_TEMPLATE.replace("__VIS__", VIS_NETWORK_URL).replace("__DATA__", blob)
+    n_nodes, n_edges = len(graph["nodes"]), len(graph["edges"])
+    lod = n_nodes > MAX_HTML_NODES or n_edges > MAX_HTML_EDGES
+    note = (f"file-level view: graph has {n_nodes} nodes and {n_edges} edges (budget "
+            f"{MAX_HTML_NODES} nodes, {MAX_HTML_EDGES} edges); double-click a file to expand it"
+            if lod else "")
+    deg = degrees(graph)
+    data = {"note": note, "lod": lod,
+            "budget": {"nodes": MAX_HTML_NODES, "edges": MAX_HTML_EDGES},
+            "meta": {"generated_at": graph["meta"].get("generated_at"),
+                     "files": len(graph["files"]), "nodes": n_nodes, "edges": n_edges},
+            "nodes": [_page_node(n, deg) for n in graph["nodes"]],
+            "edges": [{**_vis_edge(e), "id": f"e{i}"} for i, e in enumerate(graph["edges"])],
+            "file_edges": file_edges(graph) if lod else [],
+            "sem": sem}
+    # "<" escaped so no text (e.g. a docstring with "</script>") can end the data block;
+    # U+2028/U+2029 escaped so the blob is also safe as a JS string literal.
+    blob = (json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            .replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+    return _fill(blob)
 
 
-def export(root: str | os.PathLike, graph: dict) -> list[Path]:
-    """Write TREE.txt, SUMMARY.md and graph.html next to graph.json; return their paths."""
+def export(root: str | os.PathLike, graph: dict, sem: dict | None = None) -> list[Path]:
+    """Write TREE.txt, SUMMARY.md and graph.html next to graph.json; return their paths.
+
+    `sem` (optional semantic layer) only reaches graph.html."""
     out_dir = graph_path(root).parent
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for name, text in (("TREE.txt", tree_text(graph)), ("SUMMARY.md", summary_md(graph)),
-                       ("graph.html", graph_html(graph))):
+                       ("graph.html", graph_html(graph, sem))):
         path = out_dir / name
         path.write_text(text, encoding="utf-8")
         written.append(path)

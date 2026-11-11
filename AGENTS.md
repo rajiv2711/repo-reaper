@@ -27,6 +27,7 @@ reaper/extract_py.py   Python AST extraction
 reaper/resolve.py      raw refs -> edges
 reaper/graph.py        load/save .reaper/graph.json
 reaper/outputs.py      tree, summary, html, query
+reaper/templates/graph.html  graph.html page template (package data)
 reaper/llm.py          Ollama client
 reaper/enrich.py       semantic passes
 tests/fixtures/sample_py/   small known repo used by all tests

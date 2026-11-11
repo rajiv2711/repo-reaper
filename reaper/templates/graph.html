@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>repo-reaper graph</title>
+<script src="__VIS__"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px system-ui, sans-serif; background: #fff; color: #222; }
+  body { display: grid; grid-template: auto 1fr / 260px minmax(0,1fr) 340px; height: 100vh; }
+  [hidden] { display: none !important; }
+  #bar { grid-column: 1 / -1; padding: 6px 10px; border-bottom: 1px solid #ddd; display: flex;
+         gap: 10px; flex-wrap: wrap; align-items: center; }
+  #side { grid-column: 1; min-height: 0; overflow: auto; padding: 8px 10px; border-right: 1px solid #ddd; }
+  #net { grid-column: 2; min-height: 0; min-width: 0; }
+  #panel { grid-column: 3; min-height: 0; overflow: auto; padding: 8px 10px; border-left: 1px solid #ddd; }
+  #status { color: #555; }
+  #status.error { color: #b00020; font-weight: bold; }
+  #search { width: 100%; box-sizing: border-box; margin: 4px 0; }
+  #results { margin: 0 0 8px; padding-left: 22px; }
+  #legend h3, #panel h3 { font-size: 13px; margin: 10px 0 4px; color: #555; }
+  #legend label { display: flex; align-items: center; gap: 4px; }
+  .count { margin-left: auto; color: #777; font-variant-numeric: tabular-nums; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 50%; }
+  .sw.box { border-radius: 2px; }
+  .k { display: inline-block; width: 18px; border-top: 3px solid; }
+  .k.inferred { border-top-style: dashed; }
+  .k.ambiguous { border-top-style: dotted; opacity: 0.5; }
+  .hops button.active { background: #4c78a8; color: #fff; }
+  .tabs button { margin-right: 4px; }
+  .hint { color: #777; }
+  #results li { margin: 1px 0; }
+  #results button.row { display: block; width: 100%; text-align: left; border: 0; background: none;
+                        padding: 2px 4px; cursor: pointer; font: inherit; }
+  #results button.row:hover, #results button.row:focus { background: #eef3f8; }
+  .row .kind { color: #777; margin-left: 6px; font-size: 12px; }
+  .row .rid { display: block; color: #777; font-size: 11px; overflow-wrap: anywhere; }
+  .tabs button.active { background: #4c78a8; color: #fff; }
+  .badge { display: inline-block; font-size: 11px; padding: 0 4px; margin-left: 4px; border-radius: 3px;
+           background: #e8f0e8; color: #333; }
+  .badge[data-conf=INFERRED] { background: #fdebd3; }
+  .badge[data-conf=AMBIGUOUS] { background: #f3e0e0; }
+  .badge.stale { background: #f8d7da; color: #b00020; }
+  #details .meta { color: #555; margin: 2px 0; overflow-wrap: anywhere; }
+  #details .doc { white-space: pre-wrap; margin: 6px 0; }
+  .llm-block { border-left: 3px solid #b279a2; background: #faf7fb; padding: 2px 8px; margin: 8px 0; }
+  .rel { list-style: none; margin: 0; padding: 0; }
+  .rel button { border: 0; background: none; padding: 1px 0; color: #1f5a96; cursor: pointer; font: inherit;
+                text-align: left; overflow-wrap: anywhere; }
+  .rel button:hover { text-decoration: underline; }
+  body.llm-off .llm { display: none !important; }
+  #legend .grow { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
+  #legend .gsum { color: #555; font-size: 12px; margin: 0 0 2px 16px; }
+  #arch .item { margin: 6px 0 10px; }
+  #arch .item p { margin: 2px 0; }
+  .chip { font: 11px ui-monospace, monospace; margin: 2px 4px 0 0; padding: 1px 4px; cursor: pointer;
+          border: 1px solid #ccc; border-radius: 3px; background: #f6f6f6; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <strong>repo-reaper</strong>
+  <span class="hops">Hops <button data-hops="1" class="active">1</button><button data-hops="2">2</button><button data-hops="3">3</button></span>
+  <button id="clear-focus">Clear focus</button>
+  <button id="fit">Fit</button>
+  <button id="collapse-all" hidden>Collapse all</button>
+  <button id="relayout">Re-layout</button>
+  <label id="llm-toggle" hidden><input type="checkbox" checked> LLM layer</label>
+  <span id="status">Loading vis-network 9.1.9 ...</span>
+</div>
+<div id="side">
+  <label for="search"><strong>Search</strong></label>
+  <input id="search">
+  <ol id="results"></ol>
+  <div id="legend">
+    <h3>Nodes</h3>
+    <label><input type="checkbox" data-node-kind="file" checked> <span class="sw box" style="background:#4c78a8"></span> file <span class="count"></span></label>
+    <label><input type="checkbox" data-node-kind="class" checked> <span class="sw" style="background:#b279a2"></span> class <span class="count"></span></label>
+    <label><input type="checkbox" data-node-kind="function" checked> <span class="sw" style="background:#54a24b"></span> function <span class="count"></span></label>
+    <label><input type="checkbox" data-node-kind="method" checked> <span class="sw" style="background:#72b7b2"></span> method <span class="count"></span></label>
+    <label><input type="checkbox" data-node-kind="external" checked> <span class="sw box" style="background:#bab0ac"></span> external <span class="count"></span></label>
+    <h3>Edges</h3>
+    <label><input type="checkbox" data-edge-kind="contains" checked> <span class="k" style="border-color:#b0b0b0"></span> contains <span class="count"></span></label>
+    <label><input type="checkbox" data-edge-kind="imports" checked> <span class="k" style="border-color:#4c78a8"></span> imports <span class="count"></span></label>
+    <label><input type="checkbox" data-edge-kind="inherits" checked> <span class="k" style="border-color:#b279a2"></span> inherits <span class="count"></span></label>
+    <label><input type="checkbox" data-edge-kind="calls" checked> <span class="k" style="border-color:#f58518"></span> calls <span class="count"></span></label>
+    <h3>Confidence</h3>
+    <label><input type="checkbox" data-conf="EXTRACTED" checked> <span class="k" style="border-color:#555"></span> EXTRACTED <span class="count"></span></label>
+    <label><input type="checkbox" data-conf="INFERRED" checked> <span class="k inferred" style="border-color:#555"></span> INFERRED <span class="count"></span></label>
+    <label><input type="checkbox" data-conf="AMBIGUOUS" checked> <span class="k ambiguous" style="border-color:#555"></span> AMBIGUOUS <span class="count"></span></label>
+  </div>
+</div>
+<div id="net"></div>
+<div id="panel">
+  <div class="tabs"><button id="tab-details">Details</button><button id="tab-arch" class="llm" hidden>Architecture (LLM-generated)</button></div>
+  <div id="details"><p class="hint">Select a node to see its details.</p></div>
+  <div id="arch" class="llm" hidden></div>
+</div>
+<script id="graph-data" type="application/json">__DATA__</script>
+<script>
+// Data and LLM text reach the DOM only through textContent / createElement (never as markup).
+// Top level: parse D, style D.edges, build indexes, set state, define functions, boot().
+const D = JSON.parse(document.getElementById("graph-data").textContent);
+
+const NODE_KINDS = ["file", "class", "function", "method", "external"];
+const EDGE_KINDS = ["contains", "imports", "inherits", "calls"];
+const CONFS = ["EXTRACTED", "INFERRED", "AMBIGUOUS"];
+const SYMBOL_KINDS = new Set(["class", "function", "method"]);
+const KIND_COLOR = {file: "#4c78a8", class: "#b279a2", function: "#54a24b", method: "#72b7b2",
+                    external: "#bab0ac"};
+const EDGE_COLORS = {contains: "#b0b0b0", imports: "#4c78a8", inherits: "#b279a2", calls: "#f58518"};
+const DASH = {INFERRED: [8, 6], AMBIGUOUS: [2, 4]};
+const BUNDLE_COLOR = "#888";
+const RELAYOUT_MS = 3000;
+const MAX_RESULTS = 30;
+// Group colours of the LLM layer (cycled); files in no group are grey, externals keep KIND_COLOR.
+const GROUP_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2",
+                      "#17becf", "#bcbd22", "#393b79", "#637939", "#8c6d31", "#843c39", "#7b4173"];
+const NO_GROUP_COLOR = "#c7c7c7";
+const DEBOUNCE_MS = 120;
+const JSDELIVR_URL = "https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js";
+const JSDELIVR_SRI = "sha384-yxKDWWf0wwdUj/gPeuL11czrnKFQROnLgY8ll7En9NYoXibgg3C6NK/UDHNtUgWJ";
+
+// INFERRED and AMBIGUOUS are drawn differently: own dash pattern, AMBIGUOUS also half transparent.
+for (const e of D.edges) {
+  if (e.confidence === "EXTRACTED") continue;
+  e.dashes = DASH[e.confidence] || true;
+  if (e.confidence === "AMBIGUOUS") e.color = {color: e.color, opacity: 0.5};
+}
+
+const byId = new Map(D.nodes.map(n => [n.id, n]));
+const edgeById = new Map(D.edges.map(e => [e.id, e]));
+const bundleById = new Map(D.file_edges.map(f => [f.id, f]));
+// Hop focus walks non-contains edges in both directions.
+const adj = new Map();
+for (const e of D.edges) {
+  if (e.kind === "contains") continue;
+  for (const end of [e.from, e.to]) {
+    if (!adj.has(end)) adj.set(end, []);
+    adj.get(end).push(e);
+  }
+}
+// file -> its class/function/method ids (ring placement when the file is expanded).
+const symbolsOf = new Map();
+for (const n of D.nodes) {
+  if (!SYMBOL_KINDS.has(n.kind) || !n.file) continue;
+  if (!symbolsOf.has(n.file)) symbolsOf.set(n.file, []);
+  symbolsOf.get(n.file).push(n.id);
+}
+
+// Panel relation sections: edge kind -> [section for the source, section for the target].
+const REL = {calls: ["callees", "callers"], imports: ["imports", "imported by"],
+             inherits: ["bases", "subclasses"], contains: ["contains", "contained in"]};
+const REL_ORDER = ["callers", "callees", "imports", "imported by", "bases", "subclasses", "contains",
+                   "contained in"];
+
+// LLM groups: file id -> index in groupRows() (first group wins); empty without semantic.json.
+const groupOf = new Map();
+groupRows().forEach((r, i) => { for (const m of r.members) if (!groupOf.has(m)) groupOf.set(m, i); });
+
+// Search keys, lower-cased once: name, id, signature (+ degree for the tie-break).
+const searchKeys = D.nodes.map(n => ({id: n.id, deg: n.deg || 0, name: String(n.name || "").toLowerCase(),
+                                      lid: n.id.toLowerCase(),
+                                      sig: String(n.signature || "").toLowerCase()}));
+
+const state = {kinds: new Set(NODE_KINDS), ekinds: new Set(EDGE_KINDS), conf: new Set(CONFS),
+               hops: 1, center: null, focus: null, selected: null, expanded: new Set()};
+
+// Assigned in start() (vis loaded). shown = the visible sets V of the last refresh();
+// placed = state.expanded at the last refresh (files whose symbols already have a ring).
+let net = null, nodes = null, edges = null, nodeView = null, edgeView = null;
+let shown = null, placed = new Set();
+// The tab the panel shows: "details" or "arch".
+let activeTab = "details";
+
+function fileOf(id) {
+  const n = byId.get(id);
+  return (n && n.file) || id;
+}
+
+// ---------------------------------------------------------------- pure view logic (no DOM, no vis)
+
+// The part of a bundle that passes the edge-kind and confidence filters:
+// parts = [[kind, n, [[confidence, k], ...]], ...] (kinds alphabetical, zeros left out).
+function bundleParts(f) {
+  const parts = [];
+  let total = 0;
+  for (const kind of Object.keys(f.counts).sort()) {
+    if (!state.ekinds.has(kind)) continue;
+    const confs = CONFS.filter(c => state.conf.has(c) && f.counts[kind][c]).map(c => [c, f.counts[kind][c]]);
+    const n = confs.reduce((sum, c) => sum + c[1], 0);
+    if (n > 0) {
+      parts.push([kind, n, confs]);
+      total += n;
+    }
+  }
+  return {parts, total};
+}
+
+// Visible ids: nodes, raw edges (e<i>) and file-level bundles (f<i>).
+function applyView() {
+  const vn = new Set(), raw = new Set(), agg = new Set();
+  for (const n of D.nodes) {
+    if (n.id === state.selected ||
+        (state.kinds.has(n.kind) && (!state.focus || state.focus.has(n.id)) &&
+         (!D.lod || n.kind === "file" || n.kind === "external" || state.expanded.has(n.file)))) {
+      vn.add(n.id);
+    }
+  }
+  for (const e of D.edges) {
+    if (state.ekinds.has(e.kind) && state.conf.has(e.confidence) && vn.has(e.from) && vn.has(e.to) &&
+        (!D.lod || (state.expanded.has(fileOf(e.from)) && state.expanded.has(fileOf(e.to))))) {
+      raw.add(e.id);
+    }
+  }
+  if (D.lod) {
+    for (const f of D.file_edges) {
+      if (!(state.expanded.has(f.from) && state.expanded.has(f.to)) && vn.has(f.from) && vn.has(f.to) &&
+          bundleParts(f).total > 0) {
+        agg.add(f.id);
+      }
+    }
+  }
+  return {nodes: vn, raw, agg};
+}
+
+// Look of a file-level bundle from its enabled edges (follows the filters like the legend):
+// width encodes the count (1 + log2, capped at 8), dashes and opacity follow its best
+// confidence, colour = the edge-kind colour when it carries one kind, else grey.
+function bundleStyle(f) {
+  const {parts, total} = bundleParts(f);
+  const best = CONFS.find(c => parts.some(p => p[2].some(x => x[0] === c)));
+  const base = parts.length === 1 ? (EDGE_COLORS[parts[0][0]] || BUNDLE_COLOR) : BUNDLE_COLOR;
+  const detail = parts.map(([kind, n, confs]) =>
+    kind + " " + n + ": " + confs.map(([c, k]) => c + " " + k).join(", ")).join("; ");
+  return {
+    dashes: best === "INFERRED" || best === "AMBIGUOUS" ? DASH[best] : false,
+    color: best === "AMBIGUOUS" ? {color: base, opacity: 0.5} : base,
+    width: total > 0 ? Math.min(8, 1 + Math.log2(total)) : 1,
+    title: f.from + " -> " + f.to + ": " + total + (total === 1 ? " edge" : " edges") +
+           (detail ? " (" + detail + ")" : "")
+  };
+}
+
+function zeros(keys) {
+  const o = {};
+  for (const k of keys) o[k] = 0;
+  return o;
+}
+
+// Legend counts of what is shown; a bundle adds its enabled edges, lines = drawn edges.
+function legendCounts(V) {
+  const c = {node: zeros(NODE_KINDS), edge: zeros(EDGE_KINDS), conf: zeros(CONFS),
+             lines: V.raw.size + V.agg.size};
+  for (const id of V.nodes) c.node[byId.get(id).kind] += 1;
+  for (const id of V.raw) {
+    const e = edgeById.get(id);
+    c.edge[e.kind] += 1;
+    c.conf[e.confidence] += 1;
+  }
+  for (const id of V.agg) {
+    for (const [kind, , confs] of bundleParts(bundleById.get(id)).parts) {
+      for (const [conf, k] of confs) {
+        c.edge[kind] += k;
+        c.conf[conf] += k;
+      }
+    }
+  }
+  return c;
+}
+
+// Ids within `hops` steps of id, undirected, over the enabled non-contains edges.
+function bfs(id, hops) {
+  const seen = new Set([id]);
+  let frontier = [id];
+  for (let h = 0; h < hops && frontier.length; h++) {
+    const next = [];
+    for (const x of frontier) {
+      for (const e of adj.get(x) || []) {
+        if (!state.ekinds.has(e.kind) || !state.conf.has(e.confidence)) continue;
+        const y = e.from === x ? e.to : e.from;
+        if (!seen.has(y)) {
+          seen.add(y);
+          next.push(y);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return seen;
+}
+
+// Recompute the focus; in the file-level view a symbol centre expands the files of the
+// focused symbols (a file or external centre never expands anything).
+function refocus() {
+  if (!state.center) return;
+  state.focus = bfs(state.center, state.hops);
+  const c = byId.get(state.center);
+  if (D.lod && c && SYMBOL_KINDS.has(c.kind)) {
+    for (const id of state.focus) {
+      const n = byId.get(id);
+      if (n && SYMBOL_KINDS.has(n.kind) && n.file) state.expanded.add(n.file);
+    }
+  }
+}
+
+function focusOn(id) {
+  state.selected = state.center = id;
+  refocus();
+}
+
+// Double-click on a file in the file-level view: expand it to its symbols or collapse it
+// again; the focus is cleared. Anything else is left untouched (returns null).
+function toggleExpand(id) {
+  const n = byId.get(id);
+  if (!D.lod || !n || n.kind !== "file") return null;
+  state.center = state.focus = null;
+  if (state.expanded.has(id)) {
+    state.expanded.delete(id);
+    return "collapsed";
+  }
+  state.expanded.add(id);
+  return "expanded";
+}
+
+// Search: tiers 1 name == q, 2 name starts with q, 3 name contains q, 4 id contains q,
+// 5 signature contains q; ties by degree (high first), then id. Returns at most MAX_RESULTS ids.
+function rank(q) {
+  q = String(q).trim().toLowerCase();
+  if (!q) return [];
+  const hits = [];
+  for (const k of searchKeys) {
+    const tier = k.name === q ? 1 : k.name.startsWith(q) ? 2 : k.name.includes(q) ? 3 :
+                 k.lid.includes(q) ? 4 : k.sig.includes(q) ? 5 : 0;
+    if (tier) hits.push([tier, k]);
+  }
+  hits.sort((a, b) => a[0] - b[0] || b[1].deg - a[1].deg || (a[1].id < b[1].id ? -1 : a[1].id > b[1].id ? 1 : 0));
+  return hits.slice(0, MAX_RESULTS).map(h => h[1].id);
+}
+
+// Every edge touching id, by panel section: {section: [[otherId, confidence], ...]} sorted by id.
+function relations(id) {
+  const out = {};
+  for (const k of REL_ORDER) out[k] = [];
+  for (const e of D.edges) {
+    const r = REL[e.kind];
+    if (!r) continue;
+    if (e.from === id) out[r[0]].push([e.to, e.confidence]);
+    if (e.to === id) out[r[1]].push([e.from, e.confidence]);
+  }
+  const cmp = (a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0);
+  for (const k of REL_ORDER) out[k].sort(cmp);
+  return out;
+}
+
+// Group ids in numeric order (g1, g2, g10), then as text.
+function gidCmp(a, b) {
+  const x = /\d+/.exec(a), y = /\d+/.exec(b);
+  if (x && y && Number(x[0]) !== Number(y[0])) return Number(x[0]) - Number(y[0]);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// The LLM groups of semantic.json as legend rows (no DOM): {gid, name, summary, members, files, model, stale}.
+function groupRows() {
+  const groups = (D.sem && D.sem.groups) || {};
+  return Object.keys(groups).sort(gidCmp).map(gid => {
+    const g = groups[gid] || {};
+    const members = Array.isArray(g.members) ? g.members : [];
+    return {gid, name: g.name || gid, summary: g.summary || "", members, files: members.length,
+            model: g.model || null, stale: !!g.stale};
+  });
+}
+
+// Index of the group holding the node's file (a file: itself), -1 when none.
+function groupIndex(n) {
+  if (!n) return -1;
+  const i = groupOf.get(n.file || n.id);
+  return i === undefined ? -1 : i;
+}
+
+function groupHeading() {
+  const models = [...new Set(groupRows().map(r => r.model).filter(Boolean))].sort();
+  return "Groups - LLM-generated" + (models.length ? ", model " + models.join(", ") : "");
+}
+
+// Node colour: the group palette while the LLM layer is on (and groups exist), else the kind colour.
+function nodeColor(n, on) {
+  if (!on || !groupOf.size || n.kind === "external") return KIND_COLOR[n.kind] || BUNDLE_COLOR;
+  const i = groupIndex(n);
+  return i < 0 ? NO_GROUP_COLOR : GROUP_COLORS[i % GROUP_COLORS.length];
+}
+
+// The ids a fit may use: only loaded ones (vis throws on ids that are not in the view), as an array.
+function fitIds(V) {
+  if (state.focus) return [...state.focus].filter(id => V.nodes.has(id));
+  return V.nodes.has(state.selected) ? [state.selected] : [];
+}
+
+// Deep link "#node=<id>&hops=N": the id is percent-encoded (ids hold "/", ":" and ".").
+// parseHash -> {node, hops} with hops clamped to 1-3 (missing or not a number: 1), or null when
+// there is no node or the id is not in the graph. Never throws (URLSearchParams decodes leniently).
+function parseHash(h) {
+  const p = new URLSearchParams(String(h || "").replace(/^#/, ""));
+  const node = p.get("node");
+  if (!node || !byId.has(node)) return null;
+  const n = Number.parseInt(p.get("hops"), 10);
+  return {node, hops: Number.isNaN(n) ? 1 : Math.min(3, Math.max(1, n))};
+}
+
+function hashFor(id, hops) {
+  return "#node=" + encodeURIComponent(id) + "&hops=" + hops;
+}
+
+// ---------------------------------------------------------------- DOM / vis (called from start() and handlers)
+
+// A new element with an optional class and plain text (textContent, never markup).
+function el(tag, cls, text) {
+  const x = document.createElement(tag);
+  if (cls) x.className = cls;
+  if (text !== undefined && text !== null) x.textContent = String(text);
+  return x;
+}
+
+// Show the Details or the Architecture tab of the panel (hidden attribute) and remember it.
+function showTab(name) {
+  if (name === "arch" && document.getElementById("tab-arch").hidden) name = "details";
+  activeTab = name === "arch" ? "arch" : "details";
+  document.getElementById("details").hidden = activeTab !== "details";
+  document.getElementById("arch").hidden = activeTab !== "arch";
+  document.getElementById("tab-details").classList.toggle("active", activeTab === "details");
+  document.getElementById("tab-arch").classList.toggle("active", activeTab === "arch");
+}
+
+// Select a node: panel first, then focus + refresh, then (fit = true) fit the loaded focus ids.
+// A canvas click passes fit = false so the view never moves under the pointer.
+function pick(id, fit = true) {
+  if (!byId.has(id)) return;
+  renderDetails(id);
+  showTab("details");
+  focusOn(id);
+  const V = refresh();
+  net.selectNodes([id]);
+  if (fit) net.fit({nodes: fitIds(V)});
+  setHash(id);
+}
+
+// Mirror the focus centre and hops in the address bar (replaceState: no new history entry and
+// no hashchange event); null removes the hash. The deep link is optional: a URL that cannot be
+// rewritten (e.g. a sandboxed or srcdoc frame) must never break pick or Clear.
+function setHash(id) {
+  try {
+    history.replaceState(null, "", id ? hashFor(id, state.hops) : location.href.split("#")[0]);
+  } catch (err) {
+    // no deep link for this page
+  }
+}
+
+// Set the hop count (1-3) and mark its button.
+function setHops(n) {
+  state.hops = n;
+  document.querySelectorAll("button[data-hops]")
+    .forEach(b => b.classList.toggle("active", Number(b.dataset.hops) === n));
+}
+
+// Apply the deep link in the address bar: hops first, then pick (panel + focus + fit).
+// No hash, or an id that is not in the graph: nothing happens.
+function applyHash() {
+  const h = parseHash(location.hash);
+  if (!h) return;
+  setHops(h.hops);
+  pick(h.node);
+}
+
+// The Details tab: what the node is, the LLM file summary (labelled, hideable) and its
+// relations; every related id is a button that picks it. Plain text only.
+function renderDetails(id) {
+  const n = byId.get(id);
+  const box = document.getElementById("details");
+  const out = [el("h3", "", n.label), el("div", "meta", n.kind + "  " + n.id)];
+  if (n.signature) out.push(el("div", "meta", n.signature));
+  if (n.file) out.push(el("div", "meta", n.file + (n.line !== null && n.line !== undefined ? ":" + n.line : "")));
+  if (n.doc) out.push(el("div", "doc", n.doc));
+  const f = D.sem && D.sem.files ? D.sem.files[fileOf(id)] : null;
+  if (f) {
+    const block = el("div", "llm llm-block");
+    const head = el("h3", "", "File summary - LLM-generated, model " + (f.model || "unknown"));
+    if (f.stale) head.appendChild(el("span", "badge stale", "stale"));
+    block.appendChild(head);
+    if (f.role) block.appendChild(el("div", "meta", "role: " + f.role));
+    if (f.summary) block.appendChild(el("p", "", f.summary));
+    out.push(block);
+  }
+  const rel = relations(id);
+  for (const section of REL_ORDER) {
+    if (!rel[section].length) continue;
+    out.push(el("h3", "", section + " (" + rel[section].length + ")"));
+    const ul = el("ul", "rel");
+    for (const [other, conf] of rel[section]) {
+      const b = el("button", "", other);
+      b.type = "button";
+      b.addEventListener("click", () => pick(other));
+      const badge = el("span", "badge", conf);
+      badge.dataset.conf = conf;
+      const li = el("li");
+      li.appendChild(b);
+      li.appendChild(badge);
+      ul.appendChild(li);
+    }
+    out.push(ul);
+  }
+  box.replaceChildren(...out);
+}
+
+// One switch for the whole LLM layer: every .llm element (file summaries, group legend,
+// Architecture tab) and the group colours; off = structural kind colours.
+function setLLM(on) {
+  document.body.classList.toggle("llm-off", !on);
+  nodes.update(D.nodes.map(n => ({id: n.id, color: nodeColor(n, on)})));
+  if (!on && activeTab === "arch") showTab("details");
+}
+
+// Legend section of the LLM groups (class llm): heading, then per group swatch, name,
+// file count, stale mark and its summary. Only built when semantic.json has groups.
+function renderGroupLegend() {
+  const rows = groupRows();
+  if (!rows.length) return;
+  const sec = el("div", "llm");
+  sec.appendChild(el("h3", "", groupHeading()));
+  const row = (color, name, count, stale) => {
+    const r = el("div", "grow");
+    const sw = el("span", "sw");
+    sw.style.background = color;
+    r.appendChild(sw);
+    r.appendChild(el("span", "", name));
+    if (stale) r.appendChild(el("span", "badge stale", "stale"));
+    r.appendChild(el("span", "count", count));
+    return r;
+  };
+  rows.forEach((g, i) => {
+    sec.appendChild(row(GROUP_COLORS[i % GROUP_COLORS.length], g.name,
+                        g.files + (g.files === 1 ? " file" : " files"), g.stale));
+    if (g.summary) sec.appendChild(el("div", "llm gsum", g.summary));
+  });
+  const loose = D.nodes.filter(n => n.kind === "file" && groupIndex(n) < 0).length;
+  if (loose) sec.appendChild(row(NO_GROUP_COLOR, "no group", loose + (loose === 1 ? " file" : " files"), false));
+  document.getElementById("legend").appendChild(sec);
+}
+
+// The Architecture tab (class llm): overview, patterns and decisions; every evidence id is a
+// chip that picks (focuses and fits) its node. Shown only when semantic.json has one.
+function renderArch() {
+  const a = D.sem && D.sem.architecture;
+  if (!a) return;
+  const head = el("h3", "", "Architecture - LLM-generated, model " + (a.model || "unknown"));
+  if (a.stale) head.appendChild(el("span", "badge stale", "stale"));
+  const out = [head];
+  if (a.overview) out.push(el("p", "", a.overview));
+  const section = (title, list, nameKey, textKey) => {
+    if (!Array.isArray(list) || !list.length) return;
+    out.push(el("h3", "", title));
+    for (const it of list) {
+      const item = el("div", "item");
+      item.appendChild(el("strong", "", (it && it[nameKey]) || ""));
+      if (it && it[textKey]) item.appendChild(el("p", "", it[textKey]));
+      const chips = el("div");
+      for (const id of (it && Array.isArray(it.evidence)) ? it.evidence : []) {
+        const b = el("button", "chip", id);
+        b.type = "button";
+        b.addEventListener("click", () => pick(id));
+        chips.appendChild(b);
+      }
+      item.appendChild(chips);
+      out.push(item);
+    }
+  };
+  section("Patterns", a.patterns, "name", "explanation");
+  section("Decisions", a.decisions, "decision", "rationale");
+  const dropped = Array.isArray(a.dropped) ? a.dropped.length : 0;
+  if (dropped) {
+    out.push(el("p", "hint", dropped === 1 ? "1 evidence id not found in graph.json was dropped"
+                                           : dropped + " evidence ids not found in graph.json were dropped"));
+  }
+  document.getElementById("arch").replaceChildren(...out);
+  document.getElementById("tab-arch").hidden = false;
+}
+
+// Search result rows (li > button: label, kind, id) built in a DocumentFragment; returns the ids.
+function renderResults(q) {
+  const ids = rank(q);
+  const frag = document.createDocumentFragment();
+  for (const id of ids) {
+    const n = byId.get(id);
+    const b = el("button", "row");
+    b.type = "button";
+    b.appendChild(el("span", "label", n.label));
+    b.appendChild(el("span", "kind", n.kind));
+    b.appendChild(el("span", "rid", id));
+    b.addEventListener("click", () => pick(id));
+    const li = el("li");
+    li.appendChild(b);
+    frag.appendChild(li);
+  }
+  if (!ids.length && String(q).trim()) frag.appendChild(el("li", "hint", "no match"));
+  document.getElementById("results").replaceChildren(frag);
+  return ids;
+}
+
+function renderLegend(V) {
+  const c = legendCounts(V);
+  document.querySelectorAll("#legend input[data-node-kind], #legend input[data-edge-kind], #legend input[data-conf]")
+    .forEach(cb => {
+      const d = cb.dataset;
+      const n = d.nodeKind ? c.node[d.nodeKind] : d.edgeKind ? c.edge[d.edgeKind] : c.conf[d.conf];
+      const span = cb.parentNode.querySelector(".count");
+      if (span) span.textContent = String(n);
+    });
+  const shownEdges = CONFS.reduce((sum, k) => sum + c.conf[k], 0);
+  setStatus(V.nodes.size + " nodes, " + shownEdges + " edges shown (" + c.lines + " lines)" +
+            (D.note ? " - " + D.note : ""));
+}
+
+// Re-apply state to the network: ring-place the symbols of newly expanded files, remember
+// where loaded nodes are, recompute the visible sets, refresh the views, legend and status.
+function refresh() {
+  const pos = net.getPositions();
+  const ring = [];
+  for (const file of state.expanded) {
+    if (placed.has(file)) continue;
+    const ids = (symbolsOf.get(file) || []).filter(id => !pos[id]);
+    const at = pos[file] || nodes.get([file])[0] || {};
+    const cx = at.x || 0, cy = at.y || 0, r = 60 + 6 * ids.length;
+    ids.forEach((id, i) => {
+      const a = 2 * Math.PI * i / ids.length;
+      ring.push({id, x: cx + r * Math.cos(a), y: cy + r * Math.sin(a)});
+    });
+  }
+  placed = new Set(state.expanded);
+  nodes.update(Object.keys(pos).map(id => ({id, x: pos[id].x, y: pos[id].y})).concat(ring));
+  const V = applyView();
+  shown = V;
+  if (D.lod) edges.update(D.file_edges.map(f => ({id: f.id, ...bundleStyle(f)})));
+  nodeView.refresh();
+  edgeView.refresh();
+  renderLegend(V);
+  return V;
+}
+
+function clearFocus() {
+  state.center = state.focus = null;
+  refresh();
+  setHash(null);
+}
+
+// The only place physics is switched on again; it goes off once stable or after RELAYOUT_MS.
+function relayout() {
+  const stop = () => net.setOptions({physics: {enabled: false}});
+  net.setOptions({physics: {enabled: true}});
+  net.once("stabilized", stop);
+  setTimeout(stop, RELAYOUT_MS);
+}
+
+function setStatus(text, error) {
+  const el = document.getElementById("status");
+  el.textContent = text;
+  if (error) el.classList.add("error");
+}
+
+function cdnFailed() {
+  setStatus("Could not load vis-network 9.1.9 from unpkg.com or cdn.jsdelivr.net (offline or blocked): " +
+            "the graph cannot be drawn.", true);
+}
+
+function start() {
+  nodes = new vis.DataSet(D.nodes);
+  edges = new vis.DataSet(D.edges.concat(D.file_edges.map(f => ({id: f.id, from: f.from, to: f.to,
+                                                                  ...bundleStyle(f)}))));
+  shown = applyView();
+  placed = new Set(state.expanded);
+  nodeView = new vis.DataView(nodes, {filter: n => shown.nodes.has(n.id)});
+  edgeView = new vis.DataView(edges, {filter: e => shown.raw.has(e.id) || shown.agg.has(e.id)});
+  const shownNodes = shown.nodes.size;
+  net = new vis.Network(document.getElementById("net"), {nodes: nodeView, edges: edgeView}, {
+    layout: {improvedLayout: shownNodes <= 150},
+    physics: {solver: "forceAtlas2Based",
+              stabilization: {iterations: shownNodes > 300 ? 100 : 300, updateInterval: 25}},
+    edges: {arrows: {to: {enabled: true, scaleFactor: 0.5}}, smooth: false},
+    nodes: {shape: "dot", size: 10, font: {size: 12}},
+    groups: {
+      file: {color: KIND_COLOR.file, size: 16, shape: "box", font: {color: "#fff"}},
+      class: {color: KIND_COLOR.class}, function: {color: KIND_COLOR.function},
+      method: {color: KIND_COLOR.method}, external: {color: KIND_COLOR.external, shape: "diamond"}
+    },
+    interaction: {hover: true, tooltipDelay: 150, hideEdgesOnDrag: D.lod, hideEdgesOnZoom: D.lod}
+  });
+  // Lay out once, then stop: physics stays off (expand, collapse and filters never turn it on).
+  net.on("stabilizationProgress", p => setStatus("Laying out " + p.iterations + " / " + p.total + " ..."));
+  net.once("stabilizationIterationsDone", () => {
+    net.setOptions({physics: {enabled: false}});
+    renderLegend(shown);
+    applyHash();
+  });
+  renderLegend(shown);
+
+  net.on("doubleClick", p => { if (p.nodes.length && toggleExpand(p.nodes[0]) !== null) refresh(); });
+  const collapseAll = document.getElementById("collapse-all");
+  collapseAll.hidden = !D.lod;
+  collapseAll.addEventListener("click", () => {
+    state.expanded.clear();
+    state.center = state.focus = null;
+    refresh();
+  });
+  document.getElementById("relayout").addEventListener("click", relayout);
+
+  document.querySelectorAll("button[data-hops]").forEach(b => b.addEventListener("click", () => {
+    setHops(Number(b.dataset.hops));
+    refocus();
+    refresh();
+    if (state.center) setHash(state.center);
+  }));
+  // Deep link: an edited hash (or back/forward to one) is applied again.
+  window.addEventListener("hashchange", applyHash);
+  document.getElementById("clear-focus").addEventListener("click", clearFocus);
+  document.addEventListener("keydown", ev => { if (ev.key === "Escape") clearFocus(); });
+  document.querySelectorAll("#legend input[data-node-kind], #legend input[data-edge-kind], #legend input[data-conf]")
+    .forEach(cb => cb.addEventListener("change", () => {
+      const d = cb.dataset;
+      const set = d.nodeKind ? state.kinds : d.edgeKind ? state.ekinds : state.conf;
+      const key = d.nodeKind || d.edgeKind || d.conf;
+      if (cb.checked) set.add(key); else set.delete(key);
+      refocus();
+      refresh();
+    }));
+  document.getElementById("fit").addEventListener("click", () => net.fit());
+
+  // Canvas click: select + panel + focus, no viewport move (a double-click still lands on the node).
+  net.on("click", p => { if (p.nodes.length) pick(p.nodes[0], false); });
+  const search = document.getElementById("search");
+  let timer = null;
+  search.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => renderResults(search.value), DEBOUNCE_MS);
+  });
+  search.addEventListener("keydown", ev => {
+    if (ev.key !== "Enter") return;
+    clearTimeout(timer);
+    const ids = renderResults(search.value);
+    if (ids.length) pick(ids[0]);
+  });
+  document.getElementById("tab-details").addEventListener("click", () => showTab("details"));
+  document.getElementById("tab-arch").addEventListener("click", () => showTab("arch"));
+  showTab("details");
+
+  // LLM layer (only with semantic.json): labelled, hideable with one checkbox.
+  if (D.sem) {
+    renderGroupLegend();
+    renderArch();
+    const toggle = document.getElementById("llm-toggle");
+    const box = document.querySelector("#llm-toggle input");
+    toggle.hidden = false;
+    box.checked = true;
+    setLLM(true);
+    box.addEventListener("change", ev => setLLM(ev.target.checked));
+  }
+}
+
+// vis from unpkg (static tag above); if it did not load, try jsDelivr once, then say so.
+function boot() {
+  if (typeof vis === "undefined") {
+    const s = document.createElement("script");
+    s.src = JSDELIVR_URL;
+    s.integrity = JSDELIVR_SRI;
+    s.crossOrigin = "anonymous";
+    s.onload = () => { if (typeof vis === "undefined") cdnFailed(); else start(); };
+    s.onerror = cdnFailed;
+    setStatus("Loading vis-network 9.1.9 from cdn.jsdelivr.net ...");
+    document.head.appendChild(s);
+  } else {
+    start();
+  }
+}
+
+boot();
+</script>
+</body>
+</html>

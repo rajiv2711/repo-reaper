@@ -108,8 +108,12 @@ def ranked_files(graph: dict) -> list[str]:
     return sorted(files, key=lambda f: (-score[f], f))
 
 
-def file_input(graph: dict, root: str | os.PathLike, path: str) -> str:
-    """The user message for one file: path, TREE outline, source (cut when long)."""
+def file_input(graph: dict, root: str | os.PathLike, path: str,
+               _kids: dict | None = None) -> str:
+    """The user message for one file: path, TREE outline, source (cut when long).
+
+    _kids = outputs._children(graph), passed in by callers that build many inputs so the
+    contains index is built once; the text is the same either way."""
     text = (Path(root) / path).read_bytes().decode("utf-8", errors="replace")
     lines = text.split("\n")
     if lines[-1] == "":
@@ -119,7 +123,8 @@ def file_input(graph: dict, root: str | os.PathLike, path: str) -> str:
         text = "\n".join(lines[:HEAD_LINES]) + "\n"
     else:
         head = "Source:"
-    return f"File: {path}\n\nOutline:\n{outputs.file_outline(graph, path)}\n\n{head}\n{text}"
+    outline = outputs.file_outline(graph, path, _kids=_kids)
+    return f"File: {path}\n\nOutline:\n{outline}\n\n{head}\n{text}"
 
 
 def cache_key(model: str, text: str, version: str = FILES_PROMPT_VERSION) -> str:
@@ -558,3 +563,78 @@ def run_architecture(root: str | os.PathLike, graph: dict,
     path.write_text(architecture_md(graph, sem), encoding="utf-8")
     report["dropped"], report["path"] = sem["architecture"]["dropped_evidence"], path
     return report
+
+
+# ---------------------------------------------------------------- view (graph.html)
+
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def view_semantic(root: str | os.PathLike, graph: dict) -> dict | None:
+    """The `sem` object graph.html embeds; None when .reaper/semantic.json does not exist.
+
+    files: {path: {summary, role, model, stale}} for the paths that are file nodes now
+      (input_sha is not shipped); stale = the stored input_sha is not the cache key of the
+      file's input now (unreadable source -> stale).
+    groups: {gid: {name, summary, members, model, stale}}; members = the stored members that
+      are file nodes now, order kept; stale = gid is not a group of the graph now, or its
+      stored answer is not for the group's current members and input (_fresh).
+    architecture: None when the stored section is empty, else {overview, patterns, decisions,
+      model, stale, dropped}; evidence keeps only node ids in the graph now (_clean_items),
+      dropped = stored dropped_evidence + ids dropped now, sorted; stale = the stored
+      input_sha is not the cache key of arch_input now (NotReady -> stale).
+    Missing keys -> None (overview -> "", lists -> []). Reads only; never writes a file.
+    """
+    if not semantic_path(root).exists():
+        return None
+    sem = load_semantic(root)
+    # the group/architecture inputs read only well-formed entries; the view lists them all
+    raw_files, raw_groups = _dict(sem["files"]), _dict(sem["groups"])
+    sem["files"] = {p: e for p, e in raw_files.items() if isinstance(e, dict)}
+    sem["groups"] = {gid: e for gid, e in raw_groups.items() if isinstance(e, dict)}
+    file_nodes = {n["id"] for n in graph["nodes"] if n["kind"] == "file"}
+    kids = outputs._children(graph)
+    files = {}
+    for path, e in raw_files.items():
+        if path not in file_nodes:
+            continue
+        e = _dict(e)
+        try:
+            stale = e.get("input_sha") != cache_key(e.get("model", ""),
+                                                     file_input(graph, root, path, kids))
+        except OSError:
+            stale = True
+        files[path] = {"summary": e.get("summary"), "role": e.get("role"),
+                       "model": e.get("model"), "stale": stale}
+    plan = {gid: (members, text) for gid, members, _, text in _group_plan(graph, sem)}
+    groups = {}
+    for gid, e in raw_groups.items():
+        e = _dict(e)
+        stored = e.get("members")
+        members = [m for m in (stored if isinstance(stored, list) else [])
+                   if isinstance(m, str) and m in file_nodes]
+        groups[gid] = {"name": e.get("name"), "summary": e.get("summary"), "members": members,
+                       "model": e.get("model"),
+                       "stale": gid not in plan or not _fresh(e, *plan[gid])}
+    return {"files": files, "groups": groups, "architecture": _view_architecture(graph, sem)}
+
+
+def _view_architecture(graph: dict, sem: dict) -> dict | None:
+    a = _dict(sem["architecture"])
+    if not a:
+        return None
+    known = {n["id"] for n in graph["nodes"]}
+    stored = a.get("dropped_evidence")
+    dropped = {d for d in (stored if isinstance(stored, list) else []) if isinstance(d, str)}
+    patterns = _clean_items(a.get("patterns"), "name", "explanation", known, dropped)
+    decisions = _clean_items(a.get("decisions"), "decision", "rationale", known, dropped)
+    try:
+        stale = a.get("input_sha") != cache_key(a.get("model", ""), arch_input(graph, sem),
+                                                ARCH_PROMPT_VERSION)
+    except (NotReady, KeyError):  # KeyError: a current group entry without name/summary
+        stale = True
+    overview = a.get("overview")
+    return {"overview": overview if isinstance(overview, str) else "", "patterns": patterns,
+            "decisions": decisions, "model": a.get("model"), "stale": stale,
+            "dropped": sorted(dropped)}

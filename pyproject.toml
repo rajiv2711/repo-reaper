@@ -18,5 +18,8 @@ reaper = "reaper.cli:main"
 [tool.setuptools]
 packages = ["reaper"]
 
+[tool.setuptools.package-data]
+reaper = ["templates/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

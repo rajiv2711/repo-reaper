@@ -49,11 +49,26 @@ def _load_or_complain(repo: Path) -> dict | None:
         return None
 
 
+def _view_semantic(repo: Path, graph: dict) -> dict | None:
+    """Semantic layer for graph.html only (D-02); None when semantic.json does not exist
+    or cannot be read (then a warning on stderr; export still writes the structural page)."""
+    try:
+        return enrich.view_semantic(repo, graph)
+    except ValueError as err:
+        problem = f"is not valid JSON ({err})"
+    except AttributeError:  # enrich.load_semantic: valid JSON, but not an object
+        problem = "is not a JSON object"
+    print(f"warning: {enrich.semantic_path(repo)} {problem}; graph.html has no semantic layer",
+          file=sys.stderr)
+    return None
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     graph = _load_or_complain(args.repo)
     if graph is None:
         return 1
-    for path in outputs.export(args.repo, graph):
+    sem = _view_semantic(args.repo, graph)
+    for path in outputs.export(args.repo, graph, sem):
         print(path)
     return 0
 
