@@ -6,60 +6,91 @@
 <title>repo-reaper graph</title>
 <script src="__VIS__"></script>
 <style>
-  html, body { margin: 0; height: 100%; font: 14px system-ui, sans-serif; background: #fff; color: #222; }
+  /* Colour tokens: light = the Phase 8/9 look; dark when the OS asks for it (Auto) or the Theme
+     select says Dark (data-theme on <html>, kept in localStorage). Both dark blocks are the same. */
+  :root { --bg: #fff; --fg: #222; --line: #ddd; --muted: #555; --faint: #777; --error: #b00020;
+          --link: #1f5a96; --hover: #eef3f8; --badge: #e8f0e8; --badge-fg: #333; --badge-inf: #fdebd3;
+          --badge-amb: #f3e0e0; --stale: #f8d7da; --stale-fg: #b00020; --llm-bg: #faf7fb; --chip: #f6f6f6;
+          --chip-line: #ccc; --branch: #b0b0b0; --tip: #f5f4ed; --tip-fg: #000000; --tip-line: #808074; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { color-scheme: dark; --bg: #1a1a19; --fg: #e8e6e0; --line: #3a3a37;
+          --muted: #c3c2b7; --faint: #898781; --error: #ff6b7f; --link: #7ab4f0; --hover: #26323e;
+          --badge: #2b3a2b; --badge-fg: #e8e6e0; --badge-inf: #3d2f1c; --badge-amb: #3d2626; --stale: #3a1d22;
+          --stale-fg: #ff8a95; --llm-bg: #2a2230; --chip: #262624; --chip-line: #4a4945; --branch: #5f5e5a;
+          --tip: #2c2c2a; --tip-fg: #f0efec; --tip-line: #6b6a65; }
+  }
+  :root[data-theme="dark"] { color-scheme: dark; --bg: #1a1a19; --fg: #e8e6e0; --line: #3a3a37;
+          --muted: #c3c2b7; --faint: #898781; --error: #ff6b7f; --link: #7ab4f0; --hover: #26323e;
+          --badge: #2b3a2b; --badge-fg: #e8e6e0; --badge-inf: #3d2f1c; --badge-amb: #3d2626; --stale: #3a1d22;
+          --stale-fg: #ff8a95; --llm-bg: #2a2230; --chip: #262624; --chip-line: #4a4945; --branch: #5f5e5a;
+          --tip: #2c2c2a; --tip-fg: #f0efec; --tip-line: #6b6a65; }
+  html, body { margin: 0; height: 100%; font: 14px system-ui, sans-serif; background: var(--bg); color: var(--fg); }
   body { display: grid; grid-template: auto 1fr / 260px minmax(0,1fr) 340px; height: 100vh; }
   [hidden] { display: none !important; }
-  #bar { grid-column: 1 / -1; padding: 6px 10px; border-bottom: 1px solid #ddd; display: flex;
+  #bar { grid-column: 1 / -1; padding: 6px 10px; border-bottom: 1px solid var(--line); display: flex;
          gap: 10px; flex-wrap: wrap; align-items: center; }
-  #side { grid-column: 1; min-height: 0; overflow: auto; padding: 8px 10px; border-right: 1px solid #ddd; }
+  #side { grid-column: 1; min-height: 0; overflow: auto; padding: 8px 10px; border-right: 1px solid var(--line); }
   #net { grid-column: 2; min-height: 0; min-width: 0; }
   /* Graph and Tree share one cell; the hidden one keeps its size, camera and positions. */
   #net, #tree { grid-row: 2; }
   #tree { grid-column: 2; min-height: 0; min-width: 0; }
   .off { visibility: hidden; }
   .modes button.active { background: #4c78a8; color: #fff; }
-  #panel { grid-column: 3; min-height: 0; overflow: auto; padding: 8px 10px; border-left: 1px solid #ddd; }
-  #status { color: #555; }
-  #status.error { color: #b00020; font-weight: bold; }
+  #panel { grid-column: 3; min-height: 0; overflow: auto; padding: 8px 10px; border-left: 1px solid var(--line); }
+  #status { color: var(--muted); }
+  #status.error { color: var(--error); font-weight: bold; }
+  #theme-pick { margin-left: auto; }
   #search { width: 100%; box-sizing: border-box; margin: 4px 0; }
   #results { margin: 0 0 8px; padding-left: 22px; }
-  #legend h3, #panel h3 { font-size: 13px; margin: 10px 0 4px; color: #555; }
+  #legend h3, #panel h3 { font-size: 13px; margin: 10px 0 4px; color: var(--muted); }
   #legend label { display: flex; align-items: center; gap: 4px; }
-  .count { margin-left: auto; color: #777; font-variant-numeric: tabular-nums; }
+  .count { margin-left: auto; color: var(--faint); font-variant-numeric: tabular-nums; }
   .sw { display: inline-block; width: 12px; height: 12px; border-radius: 50%; }
   .sw.box { border-radius: 2px; }
+  .kind-file { background: #4c78a8; }
+  .kind-class { background: #b279a2; }
+  .kind-function { background: #54a24b; }
+  .kind-method { background: #72b7b2; }
+  .kind-external { background: #79706e; }
   .k { display: inline-block; width: 18px; border-top: 3px solid; }
   .k.inferred { border-top-style: dashed; }
   .k.ambiguous { border-top-style: dotted; opacity: 0.5; }
+  .k.e-contains { border-color: var(--branch); }
+  .k.e-imports { border-color: #4c78a8; }
+  .k.e-inherits { border-color: #b279a2; }
+  .k.e-calls { border-color: #f58518; }
+  .k.conf { border-color: var(--muted); }
   .hops button.active { background: #4c78a8; color: #fff; }
   .tabs button { margin-right: 4px; }
-  .hint { color: #777; }
+  .hint { color: var(--faint); }
   #results li { margin: 1px 0; }
   #results button.row { display: block; width: 100%; text-align: left; border: 0; background: none;
                         padding: 2px 4px; cursor: pointer; font: inherit; }
-  #results button.row:hover, #results button.row:focus { background: #eef3f8; }
-  .row .kind { color: #777; margin-left: 6px; font-size: 12px; }
-  .row .rid { display: block; color: #777; font-size: 11px; overflow-wrap: anywhere; }
+  #results button.row:hover, #results button.row:focus { background: var(--hover); }
+  .row .kind { color: var(--faint); margin-left: 6px; font-size: 12px; }
+  .row .rid { display: block; color: var(--faint); font-size: 11px; overflow-wrap: anywhere; }
   .tabs button.active { background: #4c78a8; color: #fff; }
   .badge { display: inline-block; font-size: 11px; padding: 0 4px; margin-left: 4px; border-radius: 3px;
-           background: #e8f0e8; color: #333; }
-  .badge[data-conf=INFERRED] { background: #fdebd3; }
-  .badge[data-conf=AMBIGUOUS] { background: #f3e0e0; }
-  .badge.stale { background: #f8d7da; color: #b00020; }
-  #details .meta { color: #555; margin: 2px 0; overflow-wrap: anywhere; }
+           background: var(--badge); color: var(--badge-fg); }
+  .badge[data-conf=INFERRED] { background: var(--badge-inf); }
+  .badge[data-conf=AMBIGUOUS] { background: var(--badge-amb); }
+  .badge.stale { background: var(--stale); color: var(--stale-fg); }
+  #details .meta { color: var(--muted); margin: 2px 0; overflow-wrap: anywhere; }
   #details .doc { white-space: pre-wrap; margin: 6px 0; }
-  .llm-block { border-left: 3px solid #b279a2; background: #faf7fb; padding: 2px 8px; margin: 8px 0; }
+  .llm-block { border-left: 3px solid #b279a2; background: var(--llm-bg); padding: 2px 8px; margin: 8px 0; }
   .rel { list-style: none; margin: 0; padding: 0; }
-  .rel button { border: 0; background: none; padding: 1px 0; color: #1f5a96; cursor: pointer; font: inherit;
+  .rel button { border: 0; background: none; padding: 1px 0; color: var(--link); cursor: pointer; font: inherit;
                 text-align: left; overflow-wrap: anywhere; }
   .rel button:hover { text-decoration: underline; }
   body.llm-off .llm { display: none !important; }
   #legend .grow { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
-  #legend .gsum { color: #555; font-size: 12px; margin: 0 0 2px 16px; }
+  #legend .gsum { color: var(--muted); font-size: 12px; margin: 0 0 2px 16px; }
   #arch .item { margin: 6px 0 10px; }
   #arch .item p { margin: 2px 0; }
   .chip { font: 11px ui-monospace, monospace; margin: 2px 4px 0 0; padding: 1px 4px; cursor: pointer;
-          border: 1px solid #ccc; border-radius: 3px; background: #f6f6f6; overflow-wrap: anywhere; }
+          border: 1px solid var(--chip-line); border-radius: 3px; background: var(--chip); overflow-wrap: anywhere; }
+  /* vis injects its tooltip CSS after this sheet; the html prefix wins (light = vis defaults). */
+  html div.vis-tooltip { background-color: var(--tip); color: var(--tip-fg); border-color: var(--tip-line); }
 </style>
 </head>
 <body>
@@ -73,6 +104,7 @@
   <button id="relayout">Re-layout</button>
   <label id="llm-toggle" hidden><input type="checkbox" checked> LLM layer</label>
   <span id="status">Loading vis-network 9.1.9 ...</span>
+  <label id="theme-pick" title="Colour theme; Auto follows the system setting">Theme <select id="theme"><option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
 </div>
 <div id="side">
   <label for="search"><strong>Search</strong></label>
@@ -80,20 +112,20 @@
   <ol id="results"></ol>
   <div id="legend">
     <h3>Nodes</h3>
-    <label><input type="checkbox" data-node-kind="file" checked> <span class="sw box" style="background:#4c78a8"></span> file <span class="count"></span></label>
-    <label><input type="checkbox" data-node-kind="class" checked> <span class="sw" style="background:#b279a2"></span> class <span class="count"></span></label>
-    <label><input type="checkbox" data-node-kind="function" checked> <span class="sw" style="background:#54a24b"></span> function <span class="count"></span></label>
-    <label><input type="checkbox" data-node-kind="method" checked> <span class="sw" style="background:#72b7b2"></span> method <span class="count"></span></label>
-    <label><input type="checkbox" data-node-kind="external" checked> <span class="sw box" style="background:#bab0ac"></span> external <span class="count"></span></label>
+    <label><input type="checkbox" data-node-kind="file" checked> <span class="sw box kind-file"></span> file <span class="count"></span></label>
+    <label><input type="checkbox" data-node-kind="class" checked> <span class="sw kind-class"></span> class <span class="count"></span></label>
+    <label><input type="checkbox" data-node-kind="function" checked> <span class="sw kind-function"></span> function <span class="count"></span></label>
+    <label><input type="checkbox" data-node-kind="method" checked> <span class="sw kind-method"></span> method <span class="count"></span></label>
+    <label><input type="checkbox" data-node-kind="external" checked> <span class="sw box kind-external"></span> external <span class="count"></span></label>
     <h3>Edges</h3>
-    <label><input type="checkbox" data-edge-kind="contains" checked> <span class="k" style="border-color:#b0b0b0"></span> contains <span class="count"></span></label>
-    <label><input type="checkbox" data-edge-kind="imports" checked> <span class="k" style="border-color:#4c78a8"></span> imports <span class="count"></span></label>
-    <label><input type="checkbox" data-edge-kind="inherits" checked> <span class="k" style="border-color:#b279a2"></span> inherits <span class="count"></span></label>
-    <label><input type="checkbox" data-edge-kind="calls" checked> <span class="k" style="border-color:#f58518"></span> calls <span class="count"></span></label>
+    <label><input type="checkbox" data-edge-kind="contains" checked> <span class="k e-contains"></span> contains <span class="count"></span></label>
+    <label><input type="checkbox" data-edge-kind="imports" checked> <span class="k e-imports"></span> imports <span class="count"></span></label>
+    <label><input type="checkbox" data-edge-kind="inherits" checked> <span class="k e-inherits"></span> inherits <span class="count"></span></label>
+    <label><input type="checkbox" data-edge-kind="calls" checked> <span class="k e-calls"></span> calls <span class="count"></span></label>
     <h3>Confidence</h3>
-    <label><input type="checkbox" data-conf="EXTRACTED" checked> <span class="k" style="border-color:#555"></span> EXTRACTED <span class="count"></span></label>
-    <label><input type="checkbox" data-conf="INFERRED" checked> <span class="k inferred" style="border-color:#555"></span> INFERRED <span class="count"></span></label>
-    <label><input type="checkbox" data-conf="AMBIGUOUS" checked> <span class="k ambiguous" style="border-color:#555"></span> AMBIGUOUS <span class="count"></span></label>
+    <label><input type="checkbox" data-conf="EXTRACTED" checked> <span class="k conf"></span> EXTRACTED <span class="count"></span></label>
+    <label><input type="checkbox" data-conf="INFERRED" checked> <span class="k conf inferred"></span> INFERRED <span class="count"></span></label>
+    <label><input type="checkbox" data-conf="AMBIGUOUS" checked> <span class="k conf ambiguous"></span> AMBIGUOUS <span class="count"></span></label>
   </div>
 </div>
 <div id="net"></div>
@@ -114,7 +146,7 @@ const EDGE_KINDS = ["contains", "imports", "inherits", "calls"];
 const CONFS = ["EXTRACTED", "INFERRED", "AMBIGUOUS"];
 const SYMBOL_KINDS = new Set(["class", "function", "method"]);
 const KIND_COLOR = {file: "#4c78a8", class: "#b279a2", function: "#54a24b", method: "#72b7b2",
-                    external: "#bab0ac"};
+                    external: "#79706e"};
 const EDGE_COLORS = {contains: "#b0b0b0", imports: "#4c78a8", inherits: "#b279a2", calls: "#f58518"};
 const DASH = {INFERRED: [8, 6], AMBIGUOUS: [2, 4]};
 const BUNDLE_COLOR = "#888";
@@ -123,7 +155,24 @@ const MAX_RESULTS = 30;
 // Group colours of the LLM layer (cycled); files in no group are grey, externals keep KIND_COLOR.
 const GROUP_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2",
                       "#17becf", "#bcbd22", "#393b79", "#637939", "#8c6d31", "#843c39", "#7b4173"];
-const NO_GROUP_COLOR = "#c7c7c7";
+// Dark mode keeps these hues; the 4 below 3:1 on the dark surface use their lighter tab20 sibling.
+const GROUP_COLORS_DARK = GROUP_COLORS.map(c => ({"#8c564b": "#c49c94", "#393b79": "#6b6ecf",
+                                                  "#843c39": "#d6616b", "#7b4173": "#ce6dbd"})[c] || c);
+// Canvas colours per theme (CSS tokens on :root cover the rest of the page). Light = the Phase 8/9
+// look: vis's default label ink #343434 without a halo and vis's own selection look. Dark: light
+// labels with a halo in the surface colour, quiet branch lines and no-group files, dark folder boxes
+// and a light ring on the selected / hovered node (vis's darkened border vanishes on dark).
+const INKS = {
+  light: {surface: "#ffffff", label: "#343434", halo: 0, branch: "#b0b0b0", noGroup: "#c7c7c7",
+          groups: GROUP_COLORS, dir: {background: "#eeeeee", border: "#9e9e9e"}, dirLabel: "#222",
+          ring: null},
+  dark: {surface: "#1a1a19", label: "#f0efec", halo: 3, branch: "#5f5e5a", noGroup: "#6b6a65",
+         groups: GROUP_COLORS_DARK, dir: {background: "#2c2c2a", border: "#6b6a65"}, dirLabel: "#f0efec",
+         ring: {selected: "#ffffff", hover: "#c3c2b7"}}
+};
+// Theme choice: "auto" (follow the OS), "light" or "dark", kept in localStorage under THEME_KEY.
+const THEME_KEY = "reaper-theme";
+const DARK_MQ = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
 const DEBOUNCE_MS = 120;
 const JSDELIVR_URL = "https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js";
 const JSDELIVR_SRI = "sha384-yxKDWWf0wwdUj/gPeuL11czrnKFQROnLgY8ll7En9NYoXibgg3C6NK/UDHNtUgWJ";
@@ -138,16 +187,57 @@ const DIR_PREFIX = "dir:";
 // grey without arrows; imports, calls and inherits (and file-level bundles) bend over the tree.
 const BRANCH_SMOOTH = {enabled: true, type: "cubicBezier", forceDirection: "horizontal"};
 const RELATION_SMOOTH = {enabled: true, type: "curvedCW", roundness: 0.25};
-// Tree mode node styles: the Graph mode look (see start()) plus light folder boxes.
-const TREE_GROUPS = {
-  file: {color: KIND_COLOR.file, size: 16, shape: "box", font: {color: "#fff"}},
+// Node styles by kind (Graph mode, Phase 8). Box labels sit inside the box, so they get no halo.
+const GRAPH_GROUPS = {
+  file: {color: KIND_COLOR.file, size: 16, shape: "box", font: {color: "#fff", strokeWidth: 0}},
   class: {color: KIND_COLOR.class}, function: {color: KIND_COLOR.function},
-  method: {color: KIND_COLOR.method}, external: {color: KIND_COLOR.external, shape: "diamond"},
-  dir: {shape: "box", color: {background: "#eeeeee", border: "#9e9e9e"}, font: {color: "#222"}}
+  method: {color: KIND_COLOR.method}, external: {color: KIND_COLOR.external, shape: "diamond"}
 };
 
+let themePref = savedTheme();
+let DARK = isDark(themePref);
+let INK = INKS[DARK ? "dark" : "light"];
+
+function savedTheme() {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    return t === "light" || t === "dark" ? t : "auto";
+  } catch (e) {
+    return "auto";  // no storage (node tests, some file:// setups)
+  }
+}
+
+function isDark(pref) {
+  return pref === "dark" || (pref === "auto" && !!(DARK_MQ && DARK_MQ.matches));
+}
+
+// Tree mode node styles: the Graph mode look plus folder boxes in the theme's colours.
+function treeGroups() {
+  return {...GRAPH_GROUPS,
+          dir: {shape: "box", color: {...INK.dir}, font: {color: INK.dirLabel, strokeWidth: 0}}};
+}
+
+// vis node label font of the theme (light = vis defaults; dark adds a halo over crossing edges).
+function nodeFont() {
+  return {size: 12, color: INK.label, strokeWidth: INK.halo, strokeColor: INK.surface};
+}
+
+// vis "chosen" of the theme: light keeps vis's own look; dark draws the ring (bold label kept).
+// Always an object: vis copies a node's object options when it creates the node, so a later
+// `chosen: true` would not reach nodes made under the dark object; an object is updated in place.
+function nodeChosen() {
+  if (!INK.ring) return {node: true, label: true};
+  const ring = INK.ring;
+  return {label: true, node: (values, id, selected, hovering) => {
+    values.borderColor = selected ? ring.selected : ring.hover;
+    values.borderWidth = selected ? 3 : 2;
+  }};
+}
+
 // INFERRED and AMBIGUOUS are drawn differently: own dash pattern, AMBIGUOUS also half transparent.
+// contains links take the theme's branch colour (light = the colour outputs.py writes).
 for (const e of D.edges) {
+  if (e.kind === "contains") e.color = INK.branch;
   if (e.confidence === "EXTRACTED") continue;
   e.dashes = DASH[e.confidence] || true;
   if (e.confidence === "AMBIGUOUS") e.color = {color: e.color, opacity: 0.5};
@@ -221,6 +311,8 @@ let shown = null, placed = new Set();
 let activeTab = "details";
 // LLM layer switch (setLLM); Tree mode colours its nodes from it when it is first built.
 let llmOn = true;
+// [swatch element, group index (-1 = no group)] of the group legend, recoloured by applyTheme().
+const groupSwatches = [];
 // Graph | Tree. `net` is the network shown (pick, Fit and the deep link act on it); graphNet is
 // the Phase 8 network, the t* variables are Tree mode's (built on first use); tree =
 // treeLayout(tshown). seenSel = the selection when each mode was last left.
@@ -284,7 +376,7 @@ function baseName(id) {
 }
 
 function branchLook() {
-  return {color: EDGE_COLORS.contains, width: 1, arrows: {to: {enabled: false}}, smooth: {...BRANCH_SMOOTH}};
+  return {color: INK.branch, width: 1, arrows: {to: {enabled: false}}, smooth: {...BRANCH_SMOOTH}};
 }
 
 // Label drawn in Tree mode: a file shows its basename (its folder is drawn above it); everything
@@ -547,7 +639,7 @@ function llmColour(id) {
 function nodeColor(n, on) {
   if (!on || !groupOf.size || n.kind === "external") return KIND_COLOR[n.kind] || BUNDLE_COLOR;
   const i = groupIndex(n);
-  return i < 0 ? NO_GROUP_COLOR : GROUP_COLORS[i % GROUP_COLORS.length];
+  return i < 0 ? INK.noGroup : INK.groups[i % INK.groups.length];
 }
 
 // The ids a fit may use: only loaded ones (vis throws on ids that are not in the view), as an array.
@@ -681,6 +773,11 @@ function setLLM(on) {
   if (!on && activeTab === "arch") showTab("details");
 }
 
+// Legend swatch colour of group index gi (-1 = no group), as nodeColor() paints its files.
+function swatchColour(gi) {
+  return gi < 0 ? INK.noGroup : INK.groups[gi % INK.groups.length];
+}
+
 // Legend section of the LLM groups (class llm): heading, then per group swatch, name,
 // file count, stale mark and its summary. Only built when semantic.json has groups.
 function renderGroupLegend() {
@@ -688,10 +785,11 @@ function renderGroupLegend() {
   if (!rows.length) return;
   const sec = el("div", "llm");
   sec.appendChild(el("h3", "", groupHeading()));
-  const row = (color, name, count, stale) => {
+  const row = (gi, name, count, stale) => {
     const r = el("div", "grow");
     const sw = el("span", "sw");
-    sw.style.background = color;
+    sw.style.background = swatchColour(gi);
+    groupSwatches.push([sw, gi]);
     r.appendChild(sw);
     r.appendChild(el("span", "", name));
     if (stale) r.appendChild(el("span", "badge stale", "stale"));
@@ -699,12 +797,12 @@ function renderGroupLegend() {
     return r;
   };
   rows.forEach((g, i) => {
-    sec.appendChild(row(GROUP_COLORS[i % GROUP_COLORS.length], g.name,
+    sec.appendChild(row(i, g.name,
                         g.files + (g.files === 1 ? " file" : " files"), g.stale));
     if (g.summary) sec.appendChild(el("div", "llm gsum", g.summary));
   });
   const loose = D.nodes.filter(n => n.kind === "file" && groupIndex(n) < 0).length;
-  if (loose) sec.appendChild(row(NO_GROUP_COLOR, "no group", loose + (loose === 1 ? " file" : " files"), false));
+  if (loose) sec.appendChild(row(-1, "no group", loose + (loose === 1 ? " file" : " files"), false));
   document.getElementById("legend").appendChild(sec);
 }
 
@@ -854,12 +952,8 @@ function start() {
     physics: {solver: "forceAtlas2Based",
               stabilization: {iterations: shownNodes > 300 ? 100 : 300, updateInterval: 25}},
     edges: {arrows: {to: {enabled: true, scaleFactor: 0.5}}, smooth: false},
-    nodes: {shape: "dot", size: 10, font: {size: 12}},
-    groups: {
-      file: {color: KIND_COLOR.file, size: 16, shape: "box", font: {color: "#fff"}},
-      class: {color: KIND_COLOR.class}, function: {color: KIND_COLOR.function},
-      method: {color: KIND_COLOR.method}, external: {color: KIND_COLOR.external, shape: "diamond"}
-    },
+    nodes: {shape: "dot", size: 10, font: nodeFont(), chosen: nodeChosen()},
+    groups: GRAPH_GROUPS,
     interaction: {hover: true, tooltipDelay: 150, hideEdgesOnDrag: D.lod, hideEdgesOnZoom: D.lod}
   });
   // Lay out once, then stop: physics stays off (expand, collapse and filters never turn it on).
@@ -995,8 +1089,8 @@ function startTree() {
     layout: {improvedLayout: false},
     physics: {enabled: false},
     edges: {arrows: {to: {enabled: true, scaleFactor: 0.5}}, smooth: false},
-    nodes: {shape: "dot", size: 10, font: {size: 12}},
-    groups: TREE_GROUPS,
+    nodes: {shape: "dot", size: 10, font: nodeFont(), chosen: nodeChosen()},
+    groups: treeGroups(),
     interaction: {hover: true, tooltipDelay: 150, hideEdgesOnDrag: D.lod, hideEdgesOnZoom: D.lod}
   });
   tnet.on("doubleClick", p => { if (p.nodes.length && toggleExpand(p.nodes[0]) !== null) refresh(); });
@@ -1037,6 +1131,64 @@ function boot() {
   }
 }
 
+// ---------------------------------------------------------------- Theme (Auto | Light | Dark)
+
+// The Theme select shows the saved choice; a change, or an OS switch while on Auto, restyles.
+function initTheme() {
+  setThemeAttr();
+  const select = document.getElementById("theme");
+  select.value = themePref;
+  select.addEventListener("change", ev => setTheme(ev.target.value));
+  if (DARK_MQ && DARK_MQ.addEventListener) {
+    DARK_MQ.addEventListener("change", () => { if (themePref === "auto") applyTheme(); });
+  }
+}
+
+// <html data-theme>: absent on Auto (the CSS media query decides), else the chosen theme.
+function setThemeAttr() {
+  const root = document.documentElement;
+  if (!root) return;
+  if (themePref === "auto") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", themePref);
+}
+
+function setTheme(pref) {
+  themePref = pref === "light" || pref === "dark" ? pref : "auto";
+  document.getElementById("theme").value = themePref;
+  try {
+    localStorage.setItem(THEME_KEY, themePref);
+  } catch (e) {
+    // no storage: the choice lasts until the page is closed
+  }
+  applyTheme();
+}
+
+// Restyle for the current choice: the CSS follows data-theme; on both canvases the label font,
+// selection look, folder boxes, branch lines and LLM colours change, and the group swatches. The
+// positions are written back first, because the groups option makes vis re-read every node from
+// its DataSet (the colour travels with them, as in refresh()).
+function applyTheme() {
+  DARK = isDark(themePref);
+  INK = INKS[DARK ? "dark" : "light"];
+  setThemeAttr();
+  for (const e of D.edges) if (e.kind === "contains") e.color = INK.branch;
+  for (const b of BRANCH_EDGES) b.color = INK.branch;
+  const contains = D.edges.filter(e => e.kind === "contains").map(e => e.id);
+  const look = {nodes: {font: nodeFont(), chosen: nodeChosen()}};
+  const views = [[mode === "graph" ? net : graphNet, nodes, edges, GRAPH_GROUPS, contains],
+                 [tnet, tnodes, tedges, treeGroups(), contains.concat(BRANCH_EDGES.map(b => b.id))]];
+  for (const [network, ds, es, groups, branchIds] of views) {
+    if (!network) continue;
+    const pos = network.getPositions();
+    if (D.sem) ds.update(D.nodes.map(n => ({id: n.id, color: nodeColor(n, llmOn)})));
+    ds.update(Object.keys(pos).map(id => ({id, x: pos[id].x, y: pos[id].y, ...llmColour(id)})));
+    es.update(branchIds.map(id => ({id, color: INK.branch})));
+    network.setOptions({...look, groups});
+  }
+  for (const [sw, gi] of groupSwatches) sw.style.background = swatchColour(gi);
+}
+
+initTheme();
 boot();
 </script>
 </body>

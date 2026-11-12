@@ -1,28 +1,31 @@
 # HANDOFF
-Phase 10 (optional: more languages) | status: done | ticked in AGENTS.md. All phases in AGENTS.md are now ticked.
+Phase 11 (dark mode for graph.html) | status: partial (built and tested; waiting for the user's browser checklist)
 
 ## Done this session
-- User decisions: official grammars (tree-sitter 0.26.1, tree-sitter-javascript 0.25.0, tree-sitter-typescript
-  0.23.2; pyproject dependencies, installed via environment.yml `-e .`), languages JS + TS. tree-sitter-language-pack
-  rejected: its 1.x downloads parser binaries at runtime.
-- reaper/extract_js.py (same pure contract as extract_py); graph.py dispatch; resolve.py: this/super, JS + test-runner
-  globals, alias None, index re-export fallback, rule 2 no-guess for imported non-nodes; TREE.txt JS keywords.
-- Fixture tests/fixtures/sample_js; tests/test_extract_js.py (12), tests/test_resolve_js.py (5). Phase 2-9 tests unchanged.
-- Docs: docs/phases/10-more-languages/10-PLAN.md, 10-SUMMARY.md (changes vs plan, known limits).
-- Read-only check on a 6654-file TS/TSX repo: build 7.4 s; ERROR subtrees skipped instead of dropping 5% of files.
+- AGENTS.md: Phases 11-13 added (commit efd043f).
+- User decisions: Theme select now (Auto / Light / Dark, localStorage "reaper-theme"); external #bab0ac ->
+  #79706e in both modes (CVD vs method); Phase 8 test test_template_physics_never_back_on changed (approved)
+  to allow the one theme setOptions({...look, groups}).
+- reaper/templates/graph.html only: CSS tokens + dark blocks, legend classes, vis tooltip rule; INKS (label
+  halo, white selection ring, dark folders, quiet branches, 4 dark group colours); applyTheme() restyles live.
+- tests/test_html_theme.py (8 tests). Docs: docs/phases/11-dark-mode/11-PLAN.md, 11-SUMMARY.md.
+- Headless Chrome: light Tree canvas pixel-identical to 48661d1 (only the select and external swatch differ);
+  dark <-> light switch pixel-identical to a page opened in that theme; positions kept.
 
 ## Exact next step
-No unchecked phase left. Ask the user what comes next (ideas: other languages through the same contract,
-tsconfig `paths` / workspace packages, a `&view=tree` deep link).
+Get the user's answer on the 7-item browser checklist in 11-SUMMARY.md. All pass -> tick Phase 11 in
+AGENTS.md, set 11-SUMMARY status to verified, commit "Phase 11: ...". A failed item -> fix in Phase 11.
+Then Phase 12: ask the semantic-zoom decision (a/b/c) before building.
 
 ## Open notes
-- Known JS limits in 10-SUMMARY.md (dotted package names, tsconfig paths, CommonJS exports, js/py module-name clash).
-- On that repo the class-scope fix moved 9 nodes from function to method (same total); not inspected.
-- From earlier phases: Tree mode limits (09-SUMMARY.md); deep links always open in Graph; root-cause non-object
-  semantic.json in enrich.load_semantic (08-03-SUMMARY proposal).
-- node >= 18 is an optional test-time tool for test_js_*; REAPER_REQUIRE_NODE=1 makes them fail instead of skip.
+- Screenshots: headless Chrome here reports dark; force light with --blink-settings=preferredColorScheme=1
+  (dark =0); one --user-data-dir per parallel run. Graph layout is random per run (no pixel diffs).
+- Mixed-kind bundles keep #888 in dark (4.9:1, louder than imports 3.8:1); revisit in Phase 12 if noisy.
+- Not in Phases 11-13: monorepo workspace packages resolve as external; Phase 10 limits (dotted package
+  names, tsconfig paths other than "src/", CommonJS exports).
+- Earlier: Tree mode limits (09-SUMMARY), deep links open in Graph, enrich.load_semantic non-object (08-03).
 
 ## Blockers: none
 
 ## Verify
-REAPER_REQUIRE_NODE=1 conda run -n repo-reaper pytest -q   -> 230 passed
+REAPER_REQUIRE_NODE=1 conda run -n repo-reaper pytest -q   -> 238 passed

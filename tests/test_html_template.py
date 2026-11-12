@@ -350,7 +350,12 @@ def test_template_lod_strings():
 def test_template_physics_never_back_on():
     tpl = outputs.HTML_TEMPLATE
     bodies = re.findall(r"setOptions\(\{physics: \{([^{}]*)\}\}\)", tpl)
-    assert len(bodies) == tpl.count("setOptions(")
+    # Phase 11 (user-approved): applyTheme() also restyles
+    # with one setOptions that never touches physics
+    theme = "network.setOptions({...look, groups})"
+    assert len(bodies) == tpl.count("setOptions(") - tpl.count(theme)
+    assert tpl.count(theme) == 1
+    assert "physics" not in fn_body(tpl, "applyTheme")
     assert len(bodies) >= 2
     assert sorted(bodies) == ["enabled: false"] * (len(bodies) - 1) + ["enabled: true"]
     assert "RELAYOUT_MS = 3000" in tpl
