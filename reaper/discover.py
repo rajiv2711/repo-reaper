@@ -83,15 +83,18 @@ def _walk_files(root: Path) -> list[str]:
     return found
 
 
-def list_files(root: str | os.PathLike) -> list[str]:
-    """Sorted, de-duplicated relative POSIX paths of regular files under root."""
+def list_files(root: str | os.PathLike, exclude: tuple[str, ...] = ()) -> list[str]:
+    """Sorted, de-duplicated relative POSIX paths of regular files under root.
+
+    `exclude`: relative POSIX dirs to leave out (e.g. an output dir inside the repo)."""
     root = Path(root).resolve()
     candidates = _git_files(root)
     if candidates is None:
         candidates = _walk_files(root)
     result = set()
+    prefixes = tuple(d.rstrip("/") + "/" for d in exclude)
     for rel in candidates:
-        if _skipped(rel):
+        if _skipped(rel) or rel.startswith(prefixes):
             continue
         full = root / rel
         # git -c also lists files deleted from disk; symlinks could point outside root.
@@ -101,11 +104,11 @@ def list_files(root: str | os.PathLike) -> list[str]:
     return sorted(result)
 
 
-def discover(root: str | os.PathLike) -> dict[str, dict]:
+def discover(root: str | os.PathLike, exclude: tuple[str, ...] = ()) -> dict[str, dict]:
     """{relative path: {lang, sha256, lines}} for every file in the repo, sorted by path."""
     root = Path(root).resolve()
     files = {}
-    for rel in list_files(root):
+    for rel in list_files(root, exclude):
         try:
             files[rel] = file_info(root / rel)
         except OSError:

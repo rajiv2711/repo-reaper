@@ -1,4 +1,4 @@
-"""Semantic passes over graph.json with a local LLM; results go to <repo>/.reaper/semantic.json.
+"""Semantic passes over graph.json with a local LLM; results go to semantic.json next to it.
 
 semantic.json = {files: {path: {summary, role, input_sha, model}},
                  groups: {id: {name, summary, members, input_sha, model}},
@@ -21,7 +21,7 @@ cached answer is found by input_sha, so it survives an id shift.
 
 Architecture pass: one call over the group summaries, cross-group edge counts and most-connected
 nodes -> {overview, patterns, decisions}. Needs a current answer for every group. Evidence ids
-not in graph.json are dropped. Writes <repo>/.reaper/ARCHITECTURE.md, marked LLM-generated.
+not in graph.json are dropped. Writes ARCHITECTURE.md next to it, marked LLM-generated.
 """
 
 from __future__ import annotations
@@ -73,21 +73,21 @@ FILES_SCHEMA = {"type": "object",
 
 # ---------------------------------------------------------------- semantic.json
 
-def semantic_path(root: str | os.PathLike) -> Path:
-    return graph_path(root).parent / "semantic.json"
+def semantic_path(root: str | os.PathLike, out: str | os.PathLike | None = None) -> Path:
+    return graph_path(root, out).parent / "semantic.json"
 
 
-def load_semantic(root: str | os.PathLike) -> dict:
-    path = semantic_path(root)
+def load_semantic(root: str | os.PathLike, out: str | os.PathLike | None = None) -> dict:
+    path = semantic_path(root, out)
     sem = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     for section in SECTIONS:
         sem.setdefault(section, {})
     return sem
 
 
-def save_semantic(root: str | os.PathLike, sem: dict) -> Path:
+def save_semantic(root: str | os.PathLike, sem: dict, out: str | os.PathLike | None = None) -> Path:
     """Write semantic.json atomically (temp file + rename); return its path."""
-    path = semantic_path(root)
+    path = semantic_path(root, out)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(sem, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -143,7 +143,8 @@ def two_sentences(text: str) -> str:
 
 def run_files(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS["files"],
               limit: int | None = None, dry_run: bool = False,
-              progress: Callable[[str], None] | None = None) -> dict:
+              progress: Callable[[str], None] | None = None,
+              out: str | os.PathLike | None = None) -> dict:
     """Summarize every code file whose cached answer is stale; return a report.
 
     report = {model, todo (paths to ask, after --limit), called, cached (count), failed
@@ -153,7 +154,7 @@ def run_files(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS[
     unknown model) stops the run, keeping the answers saved so far.
     """
     say = progress or (lambda _msg: None)
-    sem = load_semantic(root)
+    sem = load_semantic(root, out)
     cache = sem["files"]
     ranked = ranked_files(graph)
     todo, cached, failed = [], 0, {}
@@ -180,7 +181,7 @@ def run_files(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS[
     for path in report["pruned"]:
         del cache[path]
     if report["pruned"]:
-        save_semantic(root, sem)
+        save_semantic(root, sem, out)
     for i, (path, text, key) in enumerate(todo, 1):
         messages = [{"role": "system", "content": FILES_SYSTEM}, {"role": "user", "content": text}]
         try:
@@ -191,7 +192,7 @@ def run_files(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS[
             continue
         cache[path] = {"summary": two_sentences(reply["summary"]), "role": reply["role"],
                        "input_sha": key, "model": model}
-        save_semantic(root, sem)
+        save_semantic(root, sem, out)
         report["called"].append(path)
         say(f"[{i}/{len(todo)}] {path}: {reply['role']}")
     return report
@@ -299,7 +300,8 @@ def _group_plan(graph: dict, sem: dict) -> list[tuple[str, list[str], list[str],
 
 def run_groups(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS["groups"],
                limit: int | None = None, dry_run: bool = False,
-               progress: Callable[[str], None] | None = None) -> dict:
+               progress: Callable[[str], None] | None = None,
+               out: str | os.PathLike | None = None) -> dict:
     """Name and summarize every group whose cached answer is stale; return a report.
 
     report = {model, groups (count), todo (ids to ask, after --limit), called, cached (count),
@@ -308,7 +310,7 @@ def run_groups(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS
     Same failure handling as run_files.
     """
     say = progress or (lambda _msg: None)
-    sem = load_semantic(root)
+    sem = load_semantic(root, out)
     old = {e.get("input_sha"): e for e in sem["groups"].values()}
     plan = _group_plan(graph, sem)
     entries, todo = {}, []
@@ -333,7 +335,7 @@ def run_groups(root: str | os.PathLike, graph: dict, model: str = DEFAULT_MODELS
 
     def store() -> None:
         sem["groups"] = {gid: entries[gid] for gid, *_ in plan if gid in entries}
-        save_semantic(root, sem)
+        save_semantic(root, sem, out)
 
     store()
     for i, (gid, members, text, key) in enumerate(todo, 1):
@@ -525,7 +527,8 @@ def architecture_md(graph: dict, sem: dict) -> str:
 
 def run_architecture(root: str | os.PathLike, graph: dict,
                      model: str = DEFAULT_MODELS["architecture"], dry_run: bool = False,
-                     progress: Callable[[str], None] | None = None) -> dict:
+                     progress: Callable[[str], None] | None = None,
+                     out: str | os.PathLike | None = None) -> dict:
     """One call over the groups (unless cached); write ARCHITECTURE.md; return a report.
 
     report = {model, todo (a call is needed), called, cached, tokens, dropped (evidence ids
@@ -533,7 +536,7 @@ def run_architecture(root: str | os.PathLike, graph: dict,
     llm.LLMError (including InvalidResponse) when the call fails.
     """
     say = progress or (lambda _msg: None)
-    sem = load_semantic(root)
+    sem = load_semantic(root, out)
     text = arch_input(graph, sem)
     key = cache_key(model, text, ARCH_PROMPT_VERSION)
     cached = sem["architecture"].get("input_sha") == key
@@ -558,8 +561,8 @@ def run_architecture(root: str | os.PathLike, graph: dict,
         "decisions": _clean_items(answer.get("decisions"), "decision", "rationale", known,
                                   dropped),
         "dropped_evidence": sorted(dropped), "input_sha": key, "model": model}
-    save_semantic(root, sem)
-    path = semantic_path(root).parent / "ARCHITECTURE.md"
+    save_semantic(root, sem, out)
+    path = semantic_path(root, out).parent / "ARCHITECTURE.md"
     path.write_text(architecture_md(graph, sem), encoding="utf-8")
     report["dropped"], report["path"] = sem["architecture"]["dropped_evidence"], path
     return report
@@ -571,7 +574,8 @@ def _dict(value) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def view_semantic(root: str | os.PathLike, graph: dict) -> dict | None:
+def view_semantic(root: str | os.PathLike, graph: dict,
+                  out: str | os.PathLike | None = None) -> dict | None:
     """The `sem` object graph.html embeds; None when .reaper/semantic.json does not exist.
 
     files: {path: {summary, role, model, stale}} for the paths that are file nodes now
@@ -586,9 +590,9 @@ def view_semantic(root: str | os.PathLike, graph: dict) -> dict | None:
       input_sha is not the cache key of arch_input now (NotReady -> stale).
     Missing keys -> None (overview -> "", lists -> []). Reads only; never writes a file.
     """
-    if not semantic_path(root).exists():
+    if not semantic_path(root, out).exists():
         return None
-    sem = load_semantic(root)
+    sem = load_semantic(root, out)
     # the group/architecture inputs read only well-formed entries; the view lists them all
     raw_files, raw_groups = _dict(sem["files"]), _dict(sem["groups"])
     sem["files"] = {p: e for p, e in raw_files.items() if isinstance(e, dict)}

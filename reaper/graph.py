@@ -1,4 +1,4 @@
-"""Build, load and save <repo>/.reaper/graph.json.
+"""Build, load and save graph.json (in <repo>/.reaper/, or the --out dir).
 
 graph = {meta: {version, generated_at}, files, nodes, refs, edges}
 `files` lists every discovered file (its sha256 drives incremental updates);
@@ -25,8 +25,13 @@ VERSION = 1
 OUT_DIR = ".reaper"
 
 
-def graph_path(root: str | os.PathLike) -> Path:
-    return Path(root) / OUT_DIR / "graph.json"
+def out_dir(root: str | os.PathLike, out: str | os.PathLike | None = None) -> Path:
+    """Where the outputs go: `out` when given, else <root>/.reaper."""
+    return Path(out) if out is not None else Path(root) / OUT_DIR
+
+
+def graph_path(root: str | os.PathLike, out: str | os.PathLike | None = None) -> Path:
+    return out_dir(root, out) / "graph.json"
 
 
 def new_graph(files: dict, nodes: list, refs: list, edges: list) -> dict:
@@ -44,12 +49,12 @@ def extract_file(root: Path, rel: str, lang: str) -> tuple[list[dict], list[dict
     return [], []
 
 
-def build(root: str | os.PathLike) -> dict:
+def build(root: str | os.PathLike, out: str | os.PathLike | None = None) -> dict:
     """Full structural build: discover every file, extract each one, resolve edges."""
-    return _assemble(root, None)[0]
+    return _assemble(root, None, out)[0]
 
 
-def update(root: str | os.PathLike) -> tuple[dict, dict]:
+def update(root: str | os.PathLike, out: str | os.PathLike | None = None) -> tuple[dict, dict]:
     """Incremental build against the saved graph.json: (graph, changes).
 
     changes = {added, changed, deleted, unchanged}, each a sorted list of paths. Unchanged
@@ -58,17 +63,29 @@ def update(root: str | os.PathLike) -> tuple[dict, dict]:
     version, means a full build (every file "added"). The caller saves the graph.
     """
     try:
-        previous = load(root)
+        previous = load(root, out)
     except FileNotFoundError:
         previous = None
     if previous is not None and previous.get("meta", {}).get("version") != VERSION:
         previous = None
-    return _assemble(root, previous)
+    return _assemble(root, previous, out)
 
 
-def _assemble(root: str | os.PathLike, previous: dict | None) -> tuple[dict, dict]:
+def _inside(root: Path, out: str | os.PathLike | None) -> tuple[str, ...]:
+    """The output dir relative to root when it lies inside the repo, so it is never mapped."""
+    if out is None:
+        return ()
+    try:
+        rel = Path(out).resolve().relative_to(root).as_posix()
+    except ValueError:
+        return ()
+    return (rel,) if rel != "." else ()
+
+
+def _assemble(root: str | os.PathLike, previous: dict | None,
+              out: str | os.PathLike | None = None) -> tuple[dict, dict]:
     root = Path(root).resolve()
-    files = discover(root)
+    files = discover(root, _inside(root, out))
     old_files = previous["files"] if previous else {}
     old_nodes, old_refs = defaultdict(list), defaultdict(list)
     for n in previous["nodes"] if previous else []:
@@ -93,9 +110,9 @@ def _assemble(root: str | os.PathLike, previous: dict | None) -> tuple[dict, dic
     return new_graph(files, nodes, refs, edges), changes
 
 
-def save(root: str | os.PathLike, graph: dict) -> Path:
+def save(root: str | os.PathLike, graph: dict, out: str | os.PathLike | None = None) -> Path:
     """Write graph.json atomically (temp file + rename); return its path."""
-    path = graph_path(root)
+    path = graph_path(root, out)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(graph, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -103,5 +120,5 @@ def save(root: str | os.PathLike, graph: dict) -> Path:
     return path
 
 
-def load(root: str | os.PathLike) -> dict:
-    return json.loads(graph_path(root).read_text(encoding="utf-8"))
+def load(root: str | os.PathLike, out: str | os.PathLike | None = None) -> dict:
+    return json.loads(graph_path(root, out).read_text(encoding="utf-8"))

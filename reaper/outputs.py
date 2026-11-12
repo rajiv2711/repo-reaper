@@ -1,7 +1,7 @@
 """Human-facing outputs of graph.json: TREE.txt, SUMMARY.md, graph.html, and `reaper query`.
 
 All functions take a loaded graph dict and return text (or result dicts); export() writes the
-three files to <repo>/.reaper/. Nothing here changes the graph.
+three files next to graph.json (<repo>/.reaper/ or the --out dir). Nothing here changes the graph.
 
 "Most-connected" degree counts imports, inherits and calls edges; contains edges (pure
 ownership) and external packages (listed separately) are left out.
@@ -155,7 +155,7 @@ def summary_md(graph: dict) -> str:
     generated = graph.get("meta", {}).get("generated_at", "?")
 
     md = ["# repo-reaper summary", "",
-          f"Structural graph from .reaper/graph.json, generated {generated}. "
+          f"Structural graph from graph.json, generated {generated}. "
           "Edges marked INFERRED or AMBIGUOUS are best guesses, not proven by the code.", "",
           "## Stats", ""]
     md += _table(("total", "count"), [("files", len(graph["files"])),
@@ -300,11 +300,12 @@ def graph_html(graph: dict, sem: dict | None = None) -> str:
     return _fill(blob)
 
 
-def export(root: str | os.PathLike, graph: dict, sem: dict | None = None) -> list[Path]:
+def export(root: str | os.PathLike, graph: dict, sem: dict | None = None,
+           out: str | os.PathLike | None = None) -> list[Path]:
     """Write TREE.txt, SUMMARY.md and graph.html next to graph.json; return their paths.
 
     `sem` (optional semantic layer) only reaches graph.html."""
-    out_dir = graph_path(root).parent
+    out_dir = graph_path(root, out).parent
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for name, text in (("TREE.txt", tree_text(graph)), ("SUMMARY.md", summary_md(graph)),
@@ -313,6 +314,15 @@ def export(root: str | os.PathLike, graph: dict, sem: dict | None = None) -> lis
         path.write_text(text, encoding="utf-8")
         written.append(path)
     return written
+
+
+def write_html(root: str | os.PathLike, graph: dict, sem: dict | None = None,
+               out: str | os.PathLike | None = None) -> Path:
+    """Rewrite only graph.html (after an enrich pass: TREE.txt and SUMMARY.md ignore `sem`)."""
+    path = graph_path(root, out).parent / "graph.html"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(graph_html(graph, sem), encoding="utf-8")
+    return path
 
 
 # ---------------------------------------------------------------- query
