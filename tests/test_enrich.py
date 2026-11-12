@@ -141,7 +141,7 @@ def test_first_run_asks_every_file_most_connected_first(mapped, monkeypatch):
         assert call["messages"][0]["content"] == enrich.FILES_SYSTEM
         assert call["messages"][1]["content"] == enrich.file_input(graph, mapped, call["path"])
     sem = semantic(mapped)
-    assert set(sem) == {"files", "groups", "architecture"}
+    assert set(sem) == {"legend", "files", "groups", "architecture"}  # legend: for readers
     assert sorted(sem["files"]) == sorted(RANKED)
     assert sem["files"][U] == {"summary": "About app/utils.py. It has code.", "role": "utility",
                                "input_sha": key(MODEL, UTILS_INPUT), "model": MODEL}

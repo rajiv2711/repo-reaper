@@ -129,7 +129,11 @@ callers of physicsnemo/utils/checkpoint.py::_get_checkpoint_filename  (line 570)
 
 ## Outputs
 
-All outputs go to `<repo>/.reaper/`, or to the `--out` directory.
+All outputs go to `<repo>/.reaper/`, or to the `--out` directory. Each one explains its own labels
+(EXTRACTED / INFERRED / AMBIGUOUS, what "not linked" means, what a node id looks like, when to
+use grep instead): `legend` near the top of graph.json and semantic.json, a "How to read this
+graph" section in SUMMARY.md, `#` header lines in TREE.txt, a comment at the top of graph.html,
+and a two-line key under every `query` answer. The text comes from one place, `reaper/legend.py`.
 
 | File | Contents |
 |---|---|

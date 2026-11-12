@@ -18,6 +18,7 @@ from pathlib import Path
 
 import networkx as nx
 
+from reaper import legend
 from reaper.discover import count_by_language, language
 from reaper.graph import graph_path
 from reaper.resolve import BUILTINS as PY_BUILTINS, JS_GLOBALS, JS_PROTO_METHODS, PY_TYPE_METHODS
@@ -91,6 +92,20 @@ def file_outline(graph: dict, path: str, _kids: dict | None = None) -> str:
     return "\n".join(out)
 
 
+TREE_HEADER = [
+    "# repo-reaper TREE.txt: every parsed file (Python, JavaScript, TypeScript) with its classes,",
+    "# functions and methods. A file is `path (N lines)`; each symbol below it is one indented line,",
+    "# its signature then `# L<line>`. The links between symbols (calls, imports, inherits) are in",
+    "# graph.json: ask `reaper query <repo> callers|callees|subclasses|deps NAME`.",
+    "#",
+]
+
+
+def tree_file(graph: dict) -> str:
+    """TREE.txt: a header that explains the format and the labels, then tree_text()."""
+    return "\n".join(TREE_HEADER + legend.plain("# ")) + "\n\n" + tree_text(graph)
+
+
 def tree_text(graph: dict) -> str:
     """Every extracted file (sorted by path) with its classes/functions, signatures, lines."""
     kids = _children(graph)
@@ -158,7 +173,7 @@ def summary_md(graph: dict) -> str:
     md = ["# repo-reaper summary", "",
           f"Structural graph from graph.json, generated {generated}. "
           "Edges marked INFERRED or AMBIGUOUS are best guesses, not proven by the code.", "",
-          "## Stats", ""]
+          *legend.markdown(), "## Stats", ""]
     md += _table(("total", "count"), [("files", len(graph["files"])),
                                       ("nodes", len(graph["nodes"])),
                                       ("edges", len(graph["edges"]))], ("---", "---:"))
@@ -215,11 +230,17 @@ _TEMPLATE_FILE = importlib.resources.files("reaper").joinpath("templates/graph.h
 HTML_TEMPLATE = _TEMPLATE_FILE.read_text(encoding="utf-8")
 
 
+HTML_LEGEND = "\n".join([
+    "repo-reaper graph.html: the whole graph is embedded below as JSON (script#graph-data:",
+    "nodes and edges). What the labels mean (also in graph.json \"legend\" and SUMMARY.md):", "",
+    *legend.plain("  ")]).replace("-->", "- ->")
+
+
 def _fill(blob: str) -> str:
     """Fill the template slots in ONE pass: text put into a slot is never scanned again,
     so "__DATA__" inside the URL or "__VIS__" inside a docstring stays as it is.
     An unknown slot in the template raises KeyError."""
-    slots = {"VIS": VIS_NETWORK_URL, "DATA": blob}
+    slots = {"VIS": VIS_NETWORK_URL, "DATA": blob, "LEGEND": HTML_LEGEND}
     return re.sub(r"__([A-Z]+)__", lambda m: slots[m.group(1)], HTML_TEMPLATE)
 
 
@@ -309,7 +330,7 @@ def export(root: str | os.PathLike, graph: dict, sem: dict | None = None,
     out_dir = graph_path(root, out).parent
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
-    for name, text in (("TREE.txt", tree_text(graph)), ("SUMMARY.md", summary_md(graph)),
+    for name, text in (("TREE.txt", tree_file(graph)), ("SUMMARY.md", summary_md(graph)),
                        ("graph.html", graph_html(graph, sem))):
         path = out_dir / name
         path.write_text(text, encoding="utf-8")
@@ -624,4 +645,6 @@ def format_query(mode: str, results: list[dict], budget: int | None = DEFAULT_BU
                     rest = Counter(_top_folder(u["file"]) for u in un[MAX_UNLINKED_LISTED:])
                     out.append(f"    ... {len(un) - MAX_UNLINKED_LISTED} more ("
                                + ", ".join(f"{f} {n}" for f, n in rest.most_common()) + "; --json lists all)")
+    if mode != "deps" and any(res.get(mode) or res.get("unlinked") for res in results):
+        out += legend.query_key(mode)
     return "\n".join(out) + "\n"

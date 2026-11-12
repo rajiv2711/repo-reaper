@@ -222,7 +222,8 @@ def test_export_writes_three_files(sample_repo, capsys):
     assert main(["map", str(sample_repo)]) == 0
     assert main(["export", str(sample_repo)]) == 0
     out_dir = graph_path(sample_repo).parent
-    assert (out_dir / "TREE.txt").read_text() == EXPECTED_TREE
+    tree = (out_dir / "TREE.txt").read_text()
+    assert tree.startswith("# repo-reaper TREE.txt: ") and tree.endswith("\n\n" + EXPECTED_TREE)
     assert (out_dir / "SUMMARY.md").read_text().startswith("# repo-reaper summary\n")
     assert "vis-network@9.1.9" in (out_dir / "graph.html").read_text()
     out = capsys.readouterr().out
@@ -242,6 +243,13 @@ def run_query(repo, capsys, *args):
     capsys.readouterr()
     code = main(["query", str(repo), *args])
     return code, capsys.readouterr()
+
+
+KEY = ('key: EXTRACTED = proven by the code; INFERRED = one best guess; AMBIGUOUS = one of 2-5 '
+       'candidates (more in SUMMARY.md, or graph.json "legend")\n')
+COMPLETE = ("complete: every call written NAME(...) or x.NAME(...) in the parsed files is listed, "
+            "linked to another NAME, or under 'not linked'; not covered: NAME passed as a value or "
+            "renamed, getattr/importlib/config strings\n")
 
 
 def test_find_nodes_tiers(sample_repo):
@@ -271,6 +279,7 @@ def test_query_callers_text(sample_repo, capsys):
         "  1 caller: 1 EXTRACTED\n"
         f"  EXTRACTED  {S}::UserService.create  (calls at line 17)\n"
         "  not linked: none\n"
+        + KEY + COMPLETE
     )
 
 

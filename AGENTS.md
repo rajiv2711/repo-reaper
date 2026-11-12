@@ -22,6 +22,7 @@ reaper/extract_js.py    JavaScript/TypeScript extraction (tree-sitter)
 reaper/resolve.py       raw refs -> edges
 reaper/graph.py         build/update/load/save graph.json; `out_dir()` decides where outputs go
 reaper/outputs.py       TREE.txt, SUMMARY.md, graph.html, query
+reaper/legend.py        what the labels mean; written into every output (keep it in step with resolve.py)
 reaper/templates/graph.html   the whole page (HTML, CSS, JS), package data
 reaper/llm.py           Ollama client (stdlib urllib)
 reaper/enrich.py        LLM passes: files, groups, architecture; semantic layer for graph.html
@@ -30,7 +31,7 @@ tests/fixtures/sample_py, sample_js   small known repos used by the tests
 ## Data contract
 Outputs live in `<repo>/.reaper/` or the `--out` dir.
 - graph.json (format version 2; another version means `update` does a full build):
-  `meta {version, generated_at}`, `files {path: {lang, sha256, lines}}`,
+  `meta {version, generated_at}`, `legend` (reaper/legend.py), `files {path: {lang, sha256, lines}}`,
   `nodes [{id, kind, name, file, line, signature, doc}]` (kind file|class|function|method|external),
   `refs [{src, kind, target, alias, file, line}]` (raw, per file; kind import|call|inherit),
   `edges [{src, dst, kind, confidence, lines}]` (kind contains|imports|calls|inherits; `lines` =
@@ -38,8 +39,8 @@ Outputs live in `<repo>/.reaper/` or the `--out` dir.
 - Node ids: file = relative path `app/service.py`; symbol = `app/service.py::UserService.create`;
   external = `ext:requests`. Module name of a file: drop `.py`, `/` -> `.`, drop a trailing
   `.__init__`, drop a leading `src.`.
-- semantic.json: `{files: {path: {summary, role, input_sha, model}}, groups: {id: {name, summary,
-  members, input_sha, model}}, architecture: {...}}`. Cache key = sha256(model + prompt version + input).
+- semantic.json: `{legend, files: {path: {summary, role, input_sha, model}}, groups: {id: {name,
+  summary, members, input_sha, model}}, architecture: {...}}` (`legend` is dropped on load). Cache key = sha256(model + prompt version + input).
 
 ## Rules worth knowing before you change something
 - **Precision first.** A wrong edge costs more than a missing one: agents stop trusting the graph

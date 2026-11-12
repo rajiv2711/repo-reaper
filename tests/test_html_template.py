@@ -140,7 +140,7 @@ def test_html_one_pass_fill(tmp_path, monkeypatch):
 
 
 def test_template_slots():
-    assert set(re.findall(r"__([A-Z]+)__", outputs.HTML_TEMPLATE)) == {"VIS", "DATA"}
+    assert set(re.findall(r"__([A-Z]+)__", outputs.HTML_TEMPLATE)) == {"VIS", "DATA", "LEGEND"}
 
 
 def test_template_never_uses_innerhtml():

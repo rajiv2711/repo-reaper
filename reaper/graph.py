@@ -1,6 +1,7 @@
 """Build, load and save graph.json (in <repo>/.reaper/, or the --out dir).
 
-graph = {meta: {version, generated_at}, files, nodes, refs, edges}
+graph = {meta: {version, generated_at}, legend, files, nodes, refs, edges}
+`legend` says what the labels mean (reaper/legend.py), so the file explains itself.
 `files` lists every discovered file (its sha256 drives incremental updates);
 only files whose language has an extractor (Python, JavaScript, TypeScript) produce nodes and refs.
 
@@ -17,7 +18,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reaper import extract_js, extract_py
+from reaper import extract_js, extract_py, legend
 from reaper.discover import discover
 from reaper.resolve import resolve
 
@@ -37,7 +38,8 @@ def graph_path(root: str | os.PathLike, out: str | os.PathLike | None = None) ->
 def new_graph(files: dict, nodes: list, refs: list, edges: list) -> dict:
     meta = {"version": VERSION,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    return {"meta": meta, "files": files, "nodes": nodes, "refs": refs, "edges": edges}
+    return {"meta": meta, "legend": legend.as_dict(), "files": files, "nodes": nodes,
+            "refs": refs, "edges": edges}
 
 
 def extract_file(root: Path, rel: str, lang: str) -> tuple[list[dict], list[dict]]:

@@ -9,6 +9,7 @@ import re
 import pytest
 
 from reaper.cli import main
+from test_outputs import COMPLETE, KEY
 
 CORE = (
     "class Base:\n"            # 1
@@ -73,6 +74,7 @@ def test_callers_depth_2_with_call_sites_and_footer(repo, capsys):
         "    EXTRACTED  lib/use.py::c  (calls at line 13)\n"
         "  not linked: 1 call site named entry that the graph could not resolve (check only these):\n"
         "    lib/use.py:14  thing.entry()  in lib/use.py::c\n"
+        + KEY + COMPLETE                     # what the labels mean, under every answer
     )
 
 
@@ -96,6 +98,7 @@ def test_callees_and_subclasses(repo, capsys):
         "  2 callees: 2 EXTRACTED\n"
         "  EXTRACTED  lib/core.py::entry  (called at line 5)\n"
         "  EXTRACTED  lib/core.py::helper  (called at line 6)\n"
+        + KEY
     )
     code, out = run(repo, capsys, "subclasses", "Base", "--depth", "2")
     assert out == (
@@ -103,6 +106,7 @@ def test_callees_and_subclasses(repo, capsys):
         "  1 subclass: 1 EXTRACTED; hop 2: 1 subclass: 1 EXTRACTED\n"
         "  EXTRACTED  lib/core.py::Mid  (line 5)\n"
         "    EXTRACTED  lib/core.py::Leaf  (line 8)\n"
+        + KEY
     )
 
 
@@ -116,7 +120,8 @@ def test_budget_cuts_lines_and_says_what_shows_all(tmp_path, capsys):
         (tmp_path / rel).write_text(src)
     assert main(["map", str(tmp_path)]) == 0
     code, out = run(tmp_path, capsys, "callers", "helper", "--budget", "100")
-    lines = out.splitlines()
+    assert out.endswith(KEY + COMPLETE)
+    lines = out.splitlines()[:-2]                   # without the key
     assert lines[:2] == ["callers of lib/core.py::helper  (line 11)", "  51 callers: 51 EXTRACTED"]
     shown = lines[2:-3]
     assert all(line.startswith("  EXTRACTED  ") for line in shown)
@@ -149,4 +154,5 @@ def test_footer_says_when_the_name_is_a_builtin_method(tmp_path, capsys):
         "append is also a built-in list/dict/str (or JS Array, String...) method, so most of these "
         "are probably that):\n"
         "    lib/use.py:2  items.append()  in lib/use.py::f\n"
+        + KEY + COMPLETE
     )

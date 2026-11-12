@@ -7,7 +7,7 @@ from reaper.graph import build, graph_path, load, save
 
 def test_build_fixture(sample_repo):
     g = build(sample_repo)
-    assert set(g) == {"meta", "files", "nodes", "refs", "edges"}
+    assert set(g) == {"meta", "legend", "files", "nodes", "refs", "edges"}
     assert set(g["meta"]) == {"version", "generated_at"}
     # every discovered file is tracked (hashes drive incremental updates) ...
     assert list(g["files"]) == ["README.md", "app/__init__.py", "app/models.py",
