@@ -1,132 +1,87 @@
-# repo-reaper
+# repo-reaper: guide for contributors and coding agents
 
-## Core concept
-A lightweight tool that maps any code repository into a graph, combining:
-- Structural analysis (no LLM): files, imports, classes, functions, calls, inheritance.
-- Semantic analysis (local LLM via Ollama): what each file does, how modules relate, architectural patterns, design decisions, system purpose.
-
-## Key ideas
-1. Structure first, LLM second. The structural graph is deterministic and cheap; the LLM only adds meaning on top of it.
-2. Context management: the LLM never sees the whole repo. Each call gets one bounded chunk (one file's outline + source, or the summaries of one group of files), so any repo size fits.
-3. Two models: devstral-small-2:24b for the fast per-file pass, qwen3-coder:30b for group and architecture analysis. Run each pass to completion with one model (Ollama swaps models slowly).
-4. Incremental: every file's sha256 is stored in JSON. Re-runs re-parse only changed files and re-ask the LLM only for inputs whose hash changed.
-5. Honesty: every edge has a confidence: EXTRACTED (proven by the code), INFERRED (single best guess), AMBIGUOUS (several candidates). LLM claims must cite node ids that exist in the graph.
+What the tool does and how to use it: [README.md](README.md). This file covers how the code is
+built and the rules for changing it.
 
 ## Architecture (do not break)
-discover -> extract (per file and pure: one file in, nodes + raw refs out, no cross-file knowledge) -> resolve (global: rebuilds ALL edges from nodes + raw refs) -> outputs -> enrich (LLM).
-Incremental update = re-extract changed files, then resolve again.
-
-## Stack
-Python 3.11+ stdlib (ast, json, hashlib, argparse, subprocess, urllib), networkx, pytest; tree-sitter + tree-sitter-javascript + tree-sitter-typescript (Phase 10, user-approved). No other dependencies without a note in HANDOFF.md.
-Always use the conda env `repo-reaper` (defined in environment.yml; create with `conda env create -f environment.yml`): conda run -n repo-reaper python, conda run -n repo-reaper pytest -q, conda run -n repo-reaper reaper
+discover -> extract -> resolve -> outputs -> enrich
+- **extract** is per file and pure: one file in, nodes + raw refs out, no cross-file knowledge.
+- **resolve** is global: it rebuilds ALL edges from all nodes + raw refs, every time.
+- **Incremental update** = re-extract added/changed files (sha256 differs), keep the rest, resolve again.
+  An update must give the same graph as a full build.
+- **Structure first, LLM second.** The LLM only adds meaning on top of the deterministic graph,
+  never sees the whole repo (one bounded chunk per call), and must cite node ids that exist.
+- **Confidence on every edge:** EXTRACTED (proven by the code), INFERRED (one guess), AMBIGUOUS
+  (several candidates).
 
 ## Layout
-reaper/cli.py          `reaper` entry point (argparse)
-reaper/discover.py     list files, language, sha256
-reaper/extract_py.py   Python AST extraction
-reaper/extract_js.py   JavaScript/TypeScript extraction (tree-sitter)
-reaper/resolve.py      raw refs -> edges
-reaper/graph.py        load/save .reaper/graph.json
-reaper/outputs.py      tree, summary, html, query
-reaper/templates/graph.html  graph.html page template (package data)
-reaper/llm.py          Ollama client
-reaper/enrich.py       semantic passes
-tests/fixtures/sample_py/   small known repo used by all tests
-docs/phases/NN-slug/   GSD-style phase docs (Phase 8+): NN-CONTEXT, NN-RESEARCH, NN-PLAN, NN-*-SUMMARY, NN-VERIFICATION; Phases 9-10: NN-PLAN and NN-SUMMARY only; docs/phases/11-dark-mode, 12-tree-overview, 13-ui-polish: NN-PLAN and NN-SUMMARY only
+reaper/cli.py           `reaper` entry point (argparse); every command but scan takes `--out DIR`
+reaper/discover.py      list files (`git ls-files -co --exclude-standard`, else os.walk), language, sha256
+reaper/extract_py.py    Python extraction (ast)
+reaper/extract_js.py    JavaScript/TypeScript extraction (tree-sitter)
+reaper/resolve.py       raw refs -> edges
+reaper/graph.py         build/update/load/save graph.json; `out_dir()` decides where outputs go
+reaper/outputs.py       TREE.txt, SUMMARY.md, graph.html, query
+reaper/templates/graph.html   the whole page (HTML, CSS, JS), package data
+reaper/llm.py           Ollama client (stdlib urllib)
+reaper/enrich.py        LLM passes: files, groups, architecture; semantic layer for graph.html
+tests/fixtures/sample_py, sample_js   small known repos used by the tests
 
-## Data format (output dir: <repo>/.reaper/)
-graph.json:
-  meta:  {version, generated_at}
-  files: {path: {lang, sha256, lines}}
-  nodes: [{id, kind, name, file, line, signature, doc}]   kind: file|class|function|method|external
-  refs:  [{src, kind, target, alias, file, line}]          raw, per file; kind: import|call|inherit
-  edges: [{src, dst, kind, confidence}]                    kind: contains|imports|calls|inherits
-Node ids: file = relative path "app/service.py"; symbol = "app/service.py::UserService.create"; external = "ext:requests".
-Module name of a file: drop ".py", "/" -> ".", drop trailing ".__init__", drop leading "src.".
-semantic.json: {files: {path: {summary, role, input_sha, model}}, groups: {id: {name, summary, members, input_sha, model}}, architecture: {...}}
+## Data contract
+Outputs live in `<repo>/.reaper/` or the `--out` dir.
+- graph.json: `meta {version, generated_at}`, `files {path: {lang, sha256, lines}}`,
+  `nodes [{id, kind, name, file, line, signature, doc}]` (kind file|class|function|method|external),
+  `refs [{src, kind, target, alias, file, line}]` (raw, per file; kind import|call|inherit),
+  `edges [{src, dst, kind, confidence}]` (kind contains|imports|calls|inherits).
+- Node ids: file = relative path `app/service.py`; symbol = `app/service.py::UserService.create`;
+  external = `ext:requests`. Module name of a file: drop `.py`, `/` -> `.`, drop a trailing
+  `.__init__`, drop a leading `src.`.
+- semantic.json: `{files: {path: {summary, role, input_sha, model}}, groups: {id: {name, summary,
+  members, input_sha, model}}, architecture: {...}}`. Cache key = sha256(model + prompt version + input).
 
-## CLI
-reaper scan <repo>                    file counts per language
-reaper map <repo>                     full structural build -> graph.json
-reaper update <repo>                  incremental structural update
-reaper export <repo>                  TREE.txt, SUMMARY.md, graph.html
-reaper query <repo> callers|callees|deps NAME [--json]
-reaper enrich <repo> --pass files|groups|architecture [--model M] [--limit N] [--dry-run]
-Typical use: map -> export -> enrich --pass files --model devstral-small-2:24b -> enrich --pass groups, then --pass architecture, both with --model qwen3-coder:30b.
-## Phases (one per session; tick [x] only when acceptance passes)
-- [x] Phase 1: Scaffold + discovery
-  pyproject.toml (console script `reaper`), .gitignore (.venv/, __pycache__/, .reaper/, *.egg-info/), venv with pytest + networkx, reaper/cli.py, reaper/discover.py.
-  discover: `git ls-files -co --exclude-standard` inside a git repo, else os.walk; skip .git node_modules .venv venv __pycache__ dist build .reaper; language by extension; sha256 + line count.
-  Fixture tests/fixtures/sample_py/app/ (4-5 small files): module docstrings, `import os`, `from x import y`, a base class and a subclass, self.method() calls, cross-file function calls, one 
-function name defined in two files.
-  Accept: `reaper scan tests/fixtures/sample_py` prints the python file count; pytest passes (tests copy the fixture to tmp_path first).
-- [x] Phase 2: Python structure
-  extract_py.extract(path, source, module) -> nodes + raw refs via `ast`. Classes, functions, methods with line, signature like "create(self, name)", first docstring line. Refs: imports (absolute 
-target + local alias; relative imports made absolute), calls (dotted callee text like "self.repo.save"), class bases. Syntax error -> file node only. `reaper map` writes graph.json.
-  Accept: tests assert node counts by kind and specific refs on the fixture. Write expected values by hand from the fixture source BEFORE implementing.
-- [x] Phase 3: Resolution
-  resolve.py rebuilds all edges. contains: parent -> child. imports: file -> repo file (longest module-name prefix match), else -> ext:<top package>. inherits: base resolved via imports or same 
-file. calls, in order:
-  (1) self.x inside a class -> own method EXTRACTED, else base-class method INFERRED
-  (2) via the file's import aliases -> EXTRACTED; alias pointing outside the repo -> no edge
-  (3) same-file name -> EXTRACTED
-  (3) same-file name -> EXTRACTED
-  (4) builtins -> no edge
-  (5) else match by last name part: 1 candidate INFERRED, 2-5 AMBIGUOUS (one edge each), otherwise no edge
-  Accept: a test lists every expected non-contains edge of the fixture with its confidence.
-- [x] Phase 4: Incremental update
-  `reaper update`: compare sha256s; re-extract added/changed, drop deleted, skip unchanged, then resolve. Return {added, changed, deleted, unchanged}.
-  Accept: a no-change run gives an identical graph; editing one file, deleting one and adding one gives correct counts and edges.
-- [x] Phase 5: Outputs + query
-  TREE.txt (per file: classes/functions with signatures and line numbers), SUMMARY.md (stats, most-connected nodes, import cycles via networkx, external deps), graph.html (single file, vis-network
-9.1.9 from unpkg, dashed edges when not EXTRACTED), `reaper query`.
-  Accept: tests check key strings in each output and query results on the fixture.
-- [x] Phase 6: Semantic pass, files (fast model)
-  llm.py: POST {OLLAMA_HOST or http://localhost:11434}/api/chat with stream false, format = JSON schema, temperature 0; retry once on invalid JSON; never send num_ctx. enrich --pass files: input 
-per file = TREE outline + source (whole if <= 300 lines, else first 150) -> {summary (max 2 sentences), role}. Cache key = sha256(model + prompt version + input), stored in semantic.json. --limit 
-picks most-connected files first. --dry-run prints call count and approx tokens (chars/4).
-  Accept: tests mock llm (no real Ollama); a second run makes 0 calls.
-- [x] Phase 7: Semantic pass, groups + architecture (full model)
-  Groups = networkx Louvain communities (seed=42) on the file graph. groups pass: per group, input = member paths + file summaries (cap 12k chars) -> {name, summary}. architecture pass: input = 
-group summaries + cross-group edge counts + most-connected nodes -> {overview, patterns: [{name, explanation, evidence: [node ids]}], decisions: [...]}. Drop evidence ids not in graph.json. Write 
-ARCHITECTURE.md marked "LLM-generated".
-  Accept: mocked tests, including a fake evidence id being dropped; a manual run on this repo works.
-- [x] Phase 8: Interactive HTML view (GSD-style; docs in docs/phases/08-html-view/)
-  Goal: graph.html becomes the way to explore a mapped repo: find any symbol, see what it is, what touches it and what the LLM layer says about it, on repos of any size.
-  Depends on: Phase 5 (graph.html), Phase 7 (semantic.json). Locked decisions: docs/phases/08-html-view/08-CONTEXT.md (D-xx); later steps never contradict them.
-  Requirements: VIEW-01 search (id, name, signature; ranked list as you type). VIEW-02 click -> side panel (kind, signature, file:line, doc, file summary + role, callers/callees/imports/imported-by/bases with confidence, all clickable).
-  VIEW-03 focus on a node's 1-3 hop neighbourhood. VIEW-04 filters by node kind, edge kind and confidence (INFERRED and AMBIGUOUS drawn differently), plus a legend with counts.
-  VIEW-05 semantic layer when .reaper/semantic.json exists: group colours, summaries, architecture tab whose evidence ids focus their nodes, stale entries marked. Without semantic.json the page is the structural view and shows no LLM text.
-  VIEW-06 big repos: level of detail (file-level view with aggregated edges, expand a file) instead of the all-or-nothing files-only cut; the layout stops after it stabilizes. VIEW-07 safety: data text reaches the DOM only via textContent, template filled in one pass, a visible message when the CDN script fails.
-  Success (must be TRUE):
-    1. On this repo, typing "run_gr" lists reaper/enrich.py::run_groups; picking it focuses the node, and the panel shows its signature, doc, file summary and clickable callers/callees.
-    2. Hop focus (1-3) and the node-kind, edge-kind and confidence filters combine, and the legend counts match what is shown.
-    3. With semantic.json, nodes are coloured by group and every architecture evidence id focuses its node. With semantic.json absent, `reaper export` still works and the page has no LLM text.
-    4. A synthetic repo above the size budget opens as a file-level view with aggregated edges; a file expands to its symbols; the CPU goes idle once the layout settles.
-    5. A docstring or summary containing "<b>x</b></script>" is shown as plain text.
-  Accept: pytest checks on the generated HTML pass (data contract, UI hooks, escaping, degrade mode, with and without semantic.json); the Phase 5 html tests are unchanged unless a locked decision replaces them; 08-VERIFICATION.md says status: passed; the user confirmed the browser checklist.
-  Workflow: discuss -> research -> plan -> execute -> verify. Each step writes its file in docs/phases/08-html-view/; a resumed session continues at the first missing file.
-- [x] Phase 9: Tree mode (graph.html gets Graph | Tree toggle buttons; Graph = the Phase 8 view, unchanged and the default; Tree lays the same graph out left to right like an editor's project tree; docs in docs/phases/09-tree-mode/)
-  Goal: a newcomer clicks Tree and reads the graph like an editor's project tree: folders -> files -> classes and top-level functions -> methods, one column per depth from left to right, siblings top-down (folders first, then files, A-Z; symbols in source order). "contains" links are the tree's branches; imports, calls and inherits are bent curves drawn over it. Graph brings back the Phase 8 view where it was left.
-  Rules: Graph mode stays exactly as in Phase 8 (force layout, look, Re-layout, camera and positions kept across switches; Phase 5/8 tests unchanged); only change, approved by the user: a Phase 8 bug fix so LLM group colours survive refresh(). Tree mode: positions computed in the page from the visible nodes (no physics; no new JS library or CDN; vis-network 9.1.9 stays); folder nodes exist only in the page (graph.json, semantic.json and CLI unchanged); Phase 8 node look, rows 40 px; labels: folder name, file basename, symbols as in Phase 8; first opens at the top of the tree at 100% zoom. Shared by both modes: selection, search, side panel, hop focus, filters and legend counts, LLM layer, deep links #node=<id>&hops=N, level of detail for big repos, Fit, Collapse all; data text only via textContent.
-  Accept: pytest on the generated HTML: Tree mode on the fixture: x grows with depth and y follows the tree order (expected order written by hand from tests/fixtures/sample_py before coding), folder nodes present, branch vs relation edge styles; switching to Tree and back leaves the Graph positions and look unchanged; Phase 5/8 tests unchanged; the user confirms in the browser on this repo and on the 400-module synthetic repo.
-- [x] Phase 10 (optional): More languages: JavaScript + TypeScript via the official tree-sitter grammars (user choice over tree-sitter-language-pack, whose 1.x downloads parsers at runtime), same extract contract. Docs in docs/phases/10-more-languages/. (was Phase 8, then Phase 9; renumbered when Phase 8 "Interactive HTML view" and Phase 9 "Tree mode" were inserted)
-- [x] Phase 11: Dark mode for graph.html (docs in docs/phases/11-dark-mode/)
-- [x] Phase 12: Tree overview - see connections against the directory structure at every zoom (docs in docs/phases/12-tree-overview/)
-- [x] Phase 13: UI/UX polish of graph.html (docs in docs/phases/13-ui-polish/)
+## Rules worth knowing before you change something
+- **Call resolution order** (resolve.py):
+  1. `self.x` inside a class: own method (EXTRACTED), else a base-class method (INFERRED).
+  2. Through the file's import aliases (EXTRACTED). An alias pointing outside the repo gives no edge.
+  3. A same-file name (EXTRACTED).
+  4. Builtins give no edge.
+  5. Last name part: 1 candidate INFERRED, 2-5 AMBIGUOUS (one edge each), more gives no edge.
+- **imports** go to the repo file with the longest module-name prefix match, else to `ext:<top package>`.
+- **LLM calls** (llm.py): POST /api/chat, stream false, `format` = JSON schema, temperature 0,
+  one retry on invalid JSON. Never send num_ctx.
+- **enrich**: `--limit` picks the most-connected files first. Groups are Louvain communities
+  (seed 42) on the file graph. The architecture pass drops evidence ids not in graph.json.
+- **graph.html**:
+  - Data text reaches the DOM only via textContent. The template is filled in one pass, and `<` is
+    escaped in the embedded JSON.
+  - Above 1,500 nodes or 5,000 edges the page opens at file level.
+  - vis-network 9.1.9 from unpkg, jsDelivr as fallback. No other JS library or CDN.
 
-## Session protocol
-Start: read HANDOFF.md; run `git log --oneline -5` and `conda run -n repo-reaper pytest -q`; say "This session: Phase N". Work on the phase HANDOFF.md marks partial, else the first unchecked phase. Only that 
-phase.
-During:
-- Small steps; run tests after each. Never claim something works without showing the command output.
-- Read big files in ranges (grep -n, sed -n 'a,bp'). Never print .reaper/ outputs in full.
-- Don't change the data format or CLI; propose changes in HANDOFF.md instead.
-- Never edit expected test values just to make tests pass; fix the code.
-- Same failure after 3 fix attempts: stop and record it as a blocker.
-End (phase done, blocked, or about 40 tool calls in):
-1. Run `conda run -n repo-reaper pytest -q` and show the summary line.
-2. Tick the phase above only if its acceptance passed.
-3. Rewrite HANDOFF.md from scratch, max 30 lines: Phase N | status (done/partial/blocked) | done this session | exact next step | blockers | verify command + result.
-4. `git add -A && git commit -m "Phase N: <summary>"`
-5. Tell the user: "Start a fresh session and paste the continue prompt." Then stop.
+## Working rules
+- Environment: conda env `repo-reaper` (environment.yml). Run everything through it:
+  `conda run -n repo-reaper reaper ...`, `conda run -n repo-reaper python ...`.
+- Tests: `REAPER_REQUIRE_NODE=1 conda run -n repo-reaper pytest -q` must pass before every commit.
+  The variable makes the page-JS tests fail instead of skip when Node 18+ is missing.
+- Expected test values are written by hand from the fixtures, before the code. Never edit an
+  expected value just to make a test pass: fix the code.
+- New behaviour needs new tests. Never claim something works without showing the command output.
+- Don't change the data format, the CLI or graph.html behaviour without the owner's OK.
+- No new dependencies without a note saying why. The stack today: Python 3.11+ stdlib, networkx,
+  tree-sitter (+ javascript, typescript grammars); pytest for tests.
+- If the same failure survives 3 fix attempts, stop and report it instead of trying more.
+
+## Gotchas
+- `conda run` drops stdin: a heredoc piped into `conda run ... python` silently does nothing.
+  Write a script file instead.
+- Headless Chrome reports dark mode. For graph.html screenshots, force a theme with
+  `--blink-settings=preferredColorScheme=1` (light) or `=0` (dark), and use one `--user-data-dir`
+  per parallel run.
+- Read big files in ranges (`grep -n`, `sed -n 'a,bp'`), and never print .reaper/ outputs in full.
+
+## History
+The project was built in 13 phases. Their plans, research and summaries were removed from the
+tree but are kept under the git tag `phases-archive`:
+
+    git show phases-archive:docs/phases/08-html-view/08-CONTEXT.md
+
+Labels in comments and tests such as "Phase 8", "D-02", "VIEW-05" or "08-03-1" refer to those docs.

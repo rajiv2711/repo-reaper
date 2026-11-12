@@ -2,3 +2,6 @@
 __pycache__/
 .reaper/
 *.egg-info/
+physnemo_test/
+build/
+dist/

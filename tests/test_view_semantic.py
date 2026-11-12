@@ -1,7 +1,7 @@
 """Phase 8 (08-02): enrich.view_semantic, the `sem` part of graph.html's embedded JSON.
 
 Expected values are written by hand from the fixture (tests/fixtures/sample_py/app) and the
-"Embedded-JSON contract" -> sem in docs/phases/08-html-view/08-PLAN.md. No Ollama is called:
+"Embedded-JSON contract" -> sem in phases-archive:docs/phases/08-html-view/08-PLAN.md. No Ollama is called:
 semantic.json is written directly with enrich.save_semantic.
 """
 

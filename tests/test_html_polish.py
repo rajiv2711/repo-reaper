@@ -1,7 +1,7 @@
 """Phase 13: UI/UX polish of graph.html (toolbar + status, compact LLM groups, details panel + keys,
 calmer Tree edges).
 
-Expected values are written by hand from tests/fixtures/sample_py and docs/phases/13-ui-polish/13-PLAN.md
+Expected values are written by hand from tests/fixtures/sample_py and phases-archive:docs/phases/13-ui-polish/13-PLAN.md
 (not printed from the code). `test_template_*` never skip; `test_js_*` run the page script in node
 (see test_html_template.py).
 """

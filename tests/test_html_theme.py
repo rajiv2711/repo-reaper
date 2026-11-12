@@ -1,6 +1,6 @@
 """Phase 11: dark mode of graph.html (OS setting or the Auto / Light / Dark select, kept in localStorage).
 
-Expected values are written by hand from docs/phases/11-dark-mode/11-PLAN.md (not printed from the
+Expected values are written by hand from phases-archive:docs/phases/11-dark-mode/11-PLAN.md (not printed from the
 code). `test_template_*` never skip; `test_js_*` run the page script in node (see
 test_html_template.py), which has no matchMedia and no localStorage, so the page is light there
 unless a test stubs them.

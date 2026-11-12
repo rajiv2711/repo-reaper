@@ -1,7 +1,7 @@
 """Phase 8: the JSON embedded in graph.html (level of detail, payload fields, sem slot).
 
 Expected values are written by hand from tests/fixtures/sample_py and the
-"Embedded-JSON contract" of docs/phases/08-html-view/08-PLAN.md.
+"Embedded-JSON contract" of phases-archive:docs/phases/08-html-view/08-PLAN.md.
 """
 
 import json
