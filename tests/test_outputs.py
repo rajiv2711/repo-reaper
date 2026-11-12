@@ -260,11 +260,17 @@ def test_find_nodes_tiers(sample_repo):
 def test_query_callers_text(sample_repo, capsys):
     code, out = run_query(sample_repo, capsys, "callers", "validate")
     assert code == 0
+    # header: where the function is defined; entries: the call sites in the caller's file;
+    # footer: call sites using the name that the graph could not link (none here)
     assert out.out == (
-        f"callers of {R}::validate\n"
-        f"  EXTRACTED  {R}::UserRepository.save  (line 15)\n"
-        f"callers of {U}::validate\n"
-        f"  EXTRACTED  {S}::UserService.create  (line 15)\n"
+        f"callers of {R}::validate  (line 26)\n"
+        "  1 caller: 1 EXTRACTED\n"
+        f"  EXTRACTED  {R}::UserRepository.save  (calls at line 17)\n"
+        "  not linked: none\n"
+        f"callers of {U}::validate  (line 10)\n"
+        "  1 caller: 1 EXTRACTED\n"
+        f"  EXTRACTED  {S}::UserService.create  (calls at line 17)\n"
+        "  not linked: none\n"
     )
 
 
@@ -287,7 +293,7 @@ def test_query_callees_json(sample_repo, capsys):
 def test_query_callers_none(sample_repo, capsys):
     code, out = run_query(sample_repo, capsys, "callers", "UserService.create")
     assert code == 0
-    assert out.out == f"callers of {S}::UserService.create\n  (none)\n"
+    assert out.out == f"callers of {S}::UserService.create  (line 15)\n  (none)\n  not linked: none\n"
 
 
 def test_query_deps_file_json(sample_repo, capsys):
@@ -318,10 +324,10 @@ def test_query_deps_text(sample_repo, capsys):
     assert out.out == (
         f"deps of {U}\n"
         "  imports:\n"
-        "    ext:os\n"
+        "    ext:os  (line 2)\n"            # import os
         "  imported by:\n"
-        f"    {R}\n"
-        f"    {S}\n"
+        f"    {R}  (line 5)\n"              # from app.utils import data_dir
+        f"    {S}  (line 6)\n"              # from app.utils import normalize, validate
     )
 
 

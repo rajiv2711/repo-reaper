@@ -80,7 +80,7 @@ def test_out_puts_every_output_there(sample_repo, tmp_path, capsys):
     assert not (sample_repo / ".reaper").exists()
     capsys.readouterr()
     assert main(["query", str(sample_repo), "--out", str(out), "deps", "app/service.py"]) == 0
-    assert "    app/repository.py\n" in capsys.readouterr().out
+    assert "    app/repository.py  (line 5)\n" in capsys.readouterr().out  # from .repository import ...
 
 
 def test_out_missing_graph_hint_names_out(sample_repo, tmp_path, capsys):

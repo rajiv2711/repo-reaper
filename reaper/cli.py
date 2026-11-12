@@ -93,14 +93,14 @@ def cmd_query(args: argparse.Namespace) -> int:
     graph = _load_or_complain(args)
     if graph is None:
         return 1
-    results = outputs.query(graph, args.mode, args.name)
+    results = outputs.query(graph, args.mode, args.name, depth=args.depth)
     if not results:
         print(f"no node matches {args.name!r}", file=sys.stderr)
         return 1
     if args.json:
         print(json.dumps(results, indent=1, ensure_ascii=False))
     else:
-        print(outputs.format_query(args.mode, results), end="")
+        print(outputs.format_query(args.mode, results, budget=args.budget), end="")
     return 0
 
 
@@ -202,6 +202,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def _limit(text: str) -> int:
+    """argparse type: an integer >= 1."""
     n = int(text)
     if n < 1:
         raise argparse.ArgumentTypeError("must be >= 1")
@@ -245,9 +246,14 @@ def build_parser() -> argparse.ArgumentParser:
     exp.set_defaults(func=cmd_export)
 
     qry = sub.add_parser("query", parents=[repo],
-                         help="callers / callees of a symbol, deps of a file")
-    qry.add_argument("mode", choices=["callers", "callees", "deps"])
+                         help="callers / callees / subclasses of a symbol, deps of a file")
+    qry.add_argument("mode", choices=list(outputs.QUERY_MODES))
     qry.add_argument("name", help="node id, qualified name, module name or plain name")
+    qry.add_argument("--depth", type=_limit, default=1, metavar="N",
+                     help="hops for callers / callees / subclasses (default 1)")
+    qry.add_argument("--budget", type=_limit, default=outputs.DEFAULT_BUDGET, metavar="TOKENS",
+                     help=f"cap the text output at about this many tokens; the rest is counted "
+                          f"per folder (default {outputs.DEFAULT_BUDGET}; --json is never cut)")
     qry.add_argument("--json", action="store_true", help="print results as JSON")
     qry.set_defaults(func=cmd_query)
 

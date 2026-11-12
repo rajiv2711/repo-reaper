@@ -20,6 +20,7 @@ import networkx as nx
 
 from reaper.discover import count_by_language, language
 from reaper.graph import graph_path
+from reaper.resolve import BUILTINS as PY_BUILTINS, JS_GLOBALS, JS_PROTO_METHODS, PY_TYPE_METHODS
 
 NODE_KINDS = ("file", "class", "function", "method", "external")
 EDGE_KINDS = ("contains", "imports", "inherits", "calls")
@@ -359,58 +360,268 @@ def find_nodes(graph: dict, name: str) -> list[dict]:
     return []
 
 
-def _entry(by_id: dict, node_id: str, confidence: str | None = None) -> dict:
+QUERY_MODES = ("callers", "callees", "subclasses", "deps")
+DEFAULT_BUDGET = 2000  # tokens of text output; about 4 characters per token
+MAX_UNLINKED_LISTED = 10
+
+
+def _entry(by_id: dict, node_id: str, confidence: str | None = None,
+           lines: list[int] | None = None) -> dict:
     n = by_id.get(node_id, {})
     entry = {"id": node_id, "kind": n.get("kind"), "file": n.get("file"), "line": n.get("line")}
     if confidence is not None:
         entry["confidence"] = confidence
+    if lines is not None:
+        entry["lines"] = lines
     return entry
 
 
-def query(graph: dict, mode: str, name: str) -> list[dict]:
+def _neighbours(graph: dict, mode: str) -> dict[str, list[tuple[str, str, list[int]]]]:
+    """node id -> [(neighbour id, confidence, lines)] for callers / callees / subclasses."""
+    kind = "inherits" if mode == "subclasses" else "calls"
+    out = defaultdict(list)
+    for e in graph["edges"]:
+        if e["kind"] != kind:
+            continue
+        here, there = (e["src"], e["dst"]) if mode == "callees" else (e["dst"], e["src"])
+        out[here].append((there, e["confidence"], e.get("lines", [])))
+    for hits in out.values():
+        hits.sort()
+    return out
+
+
+def _tree(by_id: dict, near: dict, root: str, mode: str, depth: int) -> list[dict]:
+    """Entries up to `depth` hops from root, breadth first. A node is expanded once, at its
+    shallowest hop; a later repeat is marked {"repeat": True} and has no children."""
+    top = [_entry(by_id, i, c, ln) for i, c, ln in near.get(root, [])]
+    level, seen = top, {root} | {e["id"] for e in top}
+    for _ in range(depth - 1):
+        nxt = []
+        for entry in level:
+            kids = []
+            for i, c, ln in near.get(entry["id"], []):
+                kid = _entry(by_id, i, c, ln)
+                if i in seen:
+                    kid["repeat"] = True
+                else:
+                    seen.add(i)
+                    nxt.append(kid)
+                kids.append(kid)
+            entry[mode] = kids
+        level = nxt
+    return top
+
+
+def _unlinked(graph: dict, by_id: dict, node: dict) -> list[dict]:
+    """Call sites that use the node's name but are linked to nothing of that name: the receiver's
+    type was unknown, or the call went through something the graph could not follow. Calls through
+    an import from outside the repo (np.save) and builtins are left out."""
+    name = node["name"]
+    linked = set()
+    for e in graph["edges"]:
+        if e["kind"] == "calls" and by_id.get(e["dst"], {}).get("name") == name:
+            linked.update((e["src"], line) for line in e.get("lines", []))
+    outside = {(e["src"], e["dst"][4:]) for e in graph["edges"]
+               if e["kind"] == "imports" and e["dst"].startswith("ext:")}
+    ext_alias = defaultdict(set)
+    for r in graph["refs"]:
+        if r["kind"] == "import" and r["alias"] not in (None, "*") and r["target"]:
+            if (r["file"], r["target"].split(".")[0]) in outside:
+                ext_alias[r["file"]].add(r["alias"].split(".")[0])
+    out = []
+    for r in graph["refs"]:
+        if r["kind"] != "call" or r["target"].rpartition(".")[2] != name:
+            continue
+        if (r["src"], r["line"]) in linked:
+            continue
+        first = r["target"].split(".")[0].removesuffix("()")
+        known = JS_GLOBALS if language(r["file"]) in ("javascript", "typescript") else PY_BUILTINS
+        if first in ext_alias.get(r["file"], ()) or (r["target"] != name and first in known):
+            continue
+        out.append({"src": r["src"], "file": r["file"], "line": r["line"], "target": r["target"]})
+    home = node["file"] or ""
+    folder = home.rpartition("/")[0]
+    importers = {e["src"] for e in graph["edges"] if e["kind"] == "imports" and e["dst"] == home}
+    out.sort(key=lambda u: (u["file"] != home, u["file"].rpartition("/")[0] != folder,
+                            u["file"] not in importers, u["file"], u["line"]))
+    return out
+
+
+def query(graph: dict, mode: str, name: str, depth: int = 1) -> list[dict]:
     """Results per matched node, sorted by id.
 
-    callers / callees: [{node, callers|callees: [{id, kind, file, line, confidence}]}]
+    callers / callees / subclasses: [{node, line, <mode>: [entry]}], entry =
+      {id, kind, file, line, confidence, lines}; `lines` are the call sites (callers: in the
+      caller's file; callees: in the queried function's file), or the class line for subclasses.
+      With depth > 1 an entry has its own <mode> list; each node is expanded once (a repeat
+      gets "repeat": true). callers also has `unlinked`: call sites using the same name that
+      the graph linked to nothing of that name, [{src, file, line, target}].
     deps: [{node, imports: [...], imported_by: [...]}] for the file of each match
-          (a symbol means its file; an external package has only imported_by).
+          (a symbol means its file; an external package has only imported_by); entries carry
+          `lines`: where the import is, in the importing file.
     """
+    if mode not in QUERY_MODES:
+        raise ValueError(f"unknown query mode: {mode}")
     by_id = {n["id"]: n for n in graph["nodes"]}
     matches = find_nodes(graph, name)
     results = []
-    if mode in ("callers", "callees"):
-        calls = [e for e in graph["edges"] if e["kind"] == "calls"]
+    if mode in ("callers", "callees", "subclasses"):
+        near = _neighbours(graph, mode)
         for n in matches:
-            if mode == "callers":
-                hits = [(e["src"], e["confidence"]) for e in calls if e["dst"] == n["id"]]
-            else:
-                hits = [(e["dst"], e["confidence"]) for e in calls if e["src"] == n["id"]]
-            results.append({"node": n["id"],
-                            mode: [_entry(by_id, i, c) for i, c in sorted(hits)]})
-    elif mode == "deps":
-        imports = [e for e in graph["edges"] if e["kind"] == "imports"]
+            res = {"node": n["id"], "line": n.get("line"),
+                   mode: _tree(by_id, near, n["id"], mode, depth)}
+            if mode == "callers" and n["kind"] in ("function", "method", "class"):
+                res["unlinked"] = _unlinked(graph, by_id, n)
+            results.append(res)
+    else:
+        imports = sorted((e for e in graph["edges"] if e["kind"] == "imports"),
+                         key=lambda e: (e["src"], e["dst"]))
         targets = sorted({n["id"] if n["kind"] == "external" else n["file"] for n in matches})
         for t in targets:
             results.append({
                 "node": t,
-                "imports": [_entry(by_id, e["dst"]) for e in
-                            sorted(imports, key=lambda e: e["dst"]) if e["src"] == t],
-                "imported_by": [_entry(by_id, e["src"]) for e in
-                                sorted(imports, key=lambda e: e["src"]) if e["dst"] == t],
+                "imports": [_entry(by_id, e["dst"], lines=e.get("lines", []))
+                            for e in imports if e["src"] == t],
+                "imported_by": [_entry(by_id, e["src"], lines=e.get("lines", []))
+                                for e in imports if e["dst"] == t],
             })
-    else:
-        raise ValueError(f"unknown query mode: {mode}")
     return results
 
 
-def format_query(mode: str, results: list[dict]) -> str:
+_AT = {"callers": "calls at ", "callees": "called at ", "subclasses": ""}
+_NOUNS = {"callers": ("caller", "callers"), "callees": ("callee", "callees"),
+          "subclasses": ("subclass", "subclasses")}
+
+
+def _lines_text(lines: list[int]) -> str:
+    return "line " + ", ".join(map(str, lines)) if lines else ""
+
+
+def _rows(mode: str, entries: list[dict], depth: int = 1, parent: int = -1,
+          out: list | None = None) -> list[tuple[int, int, str, str]]:
+    """(hop, parent row, text, id) per entry, depth first, children indented under their parent."""
+    out = [] if out is None else out
+    for e in entries:
+        where = _lines_text(e.get("lines", []))
+        where = f"  ({_AT[mode]}{where})" if where else ""
+        repeat = "  (see above)" if e.get("repeat") else ""
+        out.append((depth, parent, f"{'  ' * depth}{e['confidence']:<9}  {e['id']}{where}{repeat}", e["id"]))
+        _rows(mode, e.get(mode, []), depth + 1, len(out) - 1, out)
+    return out
+
+
+def _budgeted(mode: str, rows: list[tuple[int, int, str, str]], room: int | None) -> list[str]:
+    """Rows that fit in `room` characters, nearer hops first and shared round-robin between the
+    parents of a hop (a row is only shown with its parent). Under a parent whose children did not
+    all fit, and at the end for hop 1: '... N more <noun> (folder counts)'."""
+    keep = set(range(len(rows)))
+    if room is not None:
+        rank, seen = [], Counter()
+        for _, parent, _, _ in rows:
+            rank.append(seen[parent])
+            seen[parent] += 1
+        keep, used = set(), 0
+        for i in sorted(range(len(rows)), key=lambda i: (rows[i][0], rank[i], i)):
+            hop, parent, text, _ = rows[i]
+            if used + len(text) + 1 > room or (parent >= 0 and parent not in keep):
+                continue
+            keep.add(i)
+            used += len(text) + 1
+    cut_under = defaultdict(list)
+    for i, (hop, parent, _, node_id) in enumerate(rows):
+        if i not in keep and (parent in keep or parent < 0):
+            cut_under[parent].append(node_id)
+    noun = _NOUNS[mode][1]
+
+    def more(p: int) -> str:
+        folders = Counter(_top_folder(n) for n in cut_under[p])
+        return (f"{'  ' * (rows[p][0] + 1 if p >= 0 else 1)}... {len(cut_under[p])} more {noun} ("
+                + ", ".join(f"{f} {n}" for f, n in folders.most_common()) + ")")
+
+    out = []
+    for i, (_, _, text, _) in enumerate(rows):
+        if i in keep:
+            out.append(text)
+        out += [more(p) for p in _closing(rows, i, cut_under)]
+    if -1 in cut_under:
+        out.append(more(-1))
+    return out
+
+
+def _closing(rows: list, i: int, cut_under: dict) -> list[int]:
+    """Ancestors of row i whose subtree ends at row i and that had children cut, innermost first."""
+    nxt = rows[i + 1][0] if i + 1 < len(rows) else 0
+    out, p = [], rows[i][1]
+    while p >= 0 and rows[p][0] >= nxt:
+        if p in cut_under:
+            out.append(p)
+        p = rows[p][1]
+    return out
+
+
+def _count(mode: str, entries: list[dict]) -> list[str]:
+    """Per hop: '5 callers: 5 EXTRACTED', then 'hop 2: 130 callers: ...' (repeats not counted)."""
+    out, level, hop = [], entries, 1
+    while level:
+        unique = {e["id"]: e for e in level if not e.get("repeat")}
+        conf = Counter(e["confidence"] for e in unique.values())
+        noun = _NOUNS[mode][len(unique) != 1]
+        text = (f"{len(unique)} {noun}: " + ", ".join(f"{conf[c]} {c}" for c in CONFIDENCES if conf[c])
+                if unique else "no new ones")
+        out.append(text if hop == 1 else f"hop {hop}: {text}")
+        level = [k for e in level for k in e.get(mode, [])]
+        hop += 1
+    return out
+
+
+def _top_folder(node_id: str) -> str:
+    path = node_id.split("::")[0]
+    return path.split("/")[0] + "/" if "/" in path else path
+
+
+def format_query(mode: str, results: list[dict], budget: int | None = DEFAULT_BUDGET) -> str:
+    """Text for an agent or a person. `budget` (tokens, ~4 characters each) caps the listed
+    entries; what is cut is counted per top-level folder, with the --budget that shows it all."""
     out = []
     for res in results:
-        out.append(f"{mode} of {res['node']}")
+        at = f"  (line {res['line']})" if res.get("line") and mode != "deps" else ""
+        out.append(f"{mode} of {res['node']}{at}")
         if mode == "deps":
             for key, label in (("imports", "imports"), ("imported_by", "imported by")):
                 out.append(f"  {label}:")
-                out += [f"    {d['id']}" for d in res[key]] or ["    (none)"]
+                out += [f"    {d['id']}" + (f"  ({_lines_text(d['lines'])})" if d.get("lines") else "")
+                        for d in res[key]] or ["    (none)"]
+            continue
+        if not res[mode]:
+            out.append("  (none)")
         else:
-            out += [f"  {r['confidence']:<9}  {r['id']}  (line {r['line']})"
-                    for r in res[mode]] or ["  (none)"]
+            counts = _count(mode, res[mode])
+            out.append("  " + "; ".join(counts))
+            rows = _rows(mode, res[mode])
+            head = len("\n".join(out))
+            room = None if budget is None else max(budget * 4 - head, 0)
+            shown = _budgeted(mode, rows, room)
+            out += shown
+            listed = sum(1 for line in shown if not line.lstrip().startswith("... "))
+            if listed < len(rows):
+                need = -(-(head + sum(len(r[2]) + 1 for r in rows) + 200) // 400) * 100
+                out.append(f"  ({len(rows) - listed} of {len(rows)} lines not shown; "
+                           f"--budget {need} shows all)")
+        if "unlinked" in res:
+            name = res["node"].rpartition("::")[2].rpartition(".")[2]
+            un = res["unlinked"]
+            builtin = name in PY_TYPE_METHODS or name in JS_PROTO_METHODS
+            if not un:
+                out.append("  not linked: none")
+            else:
+                note = (f"; {name} is also a built-in list/dict/str (or JS Array, String...) method, "
+                        f"so most of these are probably that" if builtin else "")
+                out.append(f"  not linked: {len(un)} call site{'s' * (len(un) != 1)} named {name} "
+                           f"that the graph could not resolve (check only these{note}):")
+                out += [f"    {u['file']}:{u['line']}  {u['target']}()  in {u['src']}"
+                        for u in un[:MAX_UNLINKED_LISTED]]
+                if len(un) > MAX_UNLINKED_LISTED:
+                    rest = Counter(_top_folder(u["file"]) for u in un[MAX_UNLINKED_LISTED:])
+                    out.append(f"    ... {len(un) - MAX_UNLINKED_LISTED} more ("
+                               + ", ".join(f"{f} {n}" for f, n in rest.most_common()) + "; --json lists all)")
     return "\n".join(out) + "\n"
