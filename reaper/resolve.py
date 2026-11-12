@@ -7,14 +7,17 @@ External nodes ("ext:<top package>") are rebuilt here as well, from imports that
 so resolve(resolve(nodes, refs)[0], refs) gives the same result.
 
 Call resolution, first rule that applies wins:
-  1. self.x inside a class: own method EXTRACTED, else nearest base-class method INFERRED;
-     super().x: base-class method INFERRED (else no edge)
-  2. the file's import aliases (following re-exports): EXTRACTED; alias leaving the repo: no edge
+  1. self.x / this.x inside a class: own method EXTRACTED, else nearest base-class method INFERRED;
+     super().x / super.x: base-class method INFERRED (else no edge)
+  2. the file's import aliases (following re-exports): EXTRACTED; alias leaving the repo: no edge;
+     a bare imported repo name that is no class/function there (`const X = memo(..)`): no edge
   3. same-file name (enclosing function scopes, then module level): EXTRACTED;
      then names from `from repo_module import *`: EXTRACTED
-  4. builtins: no edge
+  4. builtins (JS/TS files: JS globals such as console, JSON, Map, Error): no edge
   5. last name part: 1 candidate INFERRED, 2..5 AMBIGUOUS, otherwise no edge
      (bare `f()` only matches top-level functions and classes; dotted `x.f()` only methods)
+A dotted name that is exactly a repo module also tries the parent module's attribute of that name
+(`import {UserCard} from "./components"` -> components/index.ts re-export, not components/UserCard.tsx).
 """
 
 from __future__ import annotations
@@ -22,12 +25,28 @@ from __future__ import annotations
 import builtins
 from collections import defaultdict, deque
 
+from reaper.discover import language
+
 EXTRACTED, INFERRED, AMBIGUOUS = "EXTRACTED", "INFERRED", "AMBIGUOUS"
 STRENGTH = {EXTRACTED: 3, INFERRED: 2, AMBIGUOUS: 1}
 KIND_ORDER = {"contains": 0, "imports": 1, "inherits": 2, "calls": 3}
 SYMBOL_KINDS = ("class", "function", "method")
 SCOPE_KINDS = ("function", "method")
 BUILTINS = frozenset(dir(builtins))
+JS_LANGS = ("javascript", "typescript")
+JS_GLOBALS = frozenset({
+    "console", "JSON", "Math", "Object", "Array", "String", "Number", "Boolean", "Symbol", "BigInt",
+    "Promise", "Date", "RegExp", "Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError",
+    "Map", "Set", "WeakMap", "WeakSet", "Proxy", "Reflect", "Intl", "parseInt", "parseFloat", "isNaN",
+    "isFinite", "encodeURIComponent", "decodeURIComponent", "encodeURI", "decodeURI", "setTimeout",
+    "clearTimeout", "setInterval", "clearInterval", "queueMicrotask", "structuredClone", "fetch",
+    "require", "globalThis", "window", "document", "process", "Buffer", "URL", "URLSearchParams",
+    "TextEncoder", "TextDecoder", "Uint8Array", "ArrayBuffer", "AbortController", "module", "exports",
+    # test-runner globals (jest, vitest, mocha)
+    "describe", "it", "test", "expect", "beforeEach", "beforeAll", "afterEach", "afterAll", "jest", "vi",
+})
+SELF_NAMES = ("self", "this")
+SUPER_NAMES = ("super()", "super")
 MAX_CANDIDATES = 5
 MAX_REEXPORT_HOPS = 5
 
@@ -80,6 +99,8 @@ class _Resolver:
                          key=lambda r: (r["file"], r["line"]))
         for ref in imports:
             alias, target = ref["alias"], ref["target"]
+            if alias is None:  # side-effect import (JS `import "./m"`): binds no name
+                continue
             if alias == "*":
                 if target not in self.stars[ref["file"]]:
                     self.stars[ref["file"]].append(target)
@@ -128,6 +149,10 @@ class _Resolver:
     def symbol(self, dotted: str, hops: int = MAX_REEXPORT_HOPS) -> str | None:
         """Repo symbol id for an absolute dotted name, following re-exports and star imports."""
         hit = self.module_of(dotted)
+        if hit and not hit[1] and "." in dotted:  # exactly a module: maybe its parent's attribute
+            parent, _, last = dotted.rpartition(".")
+            up = self.module_of(parent)
+            hit = (up[0], f"{up[1]}.{last}" if up[1] else last) if up else None
         if not hit or not hit[1]:
             return None
         file_id, rest = hit
@@ -230,17 +255,17 @@ class _Resolver:
         src, text, file_id = ref["src"], ref["target"], ref["file"]
         parts = text.split(".")
 
-        # 1. self.x / super().x
-        if len(parts) == 2 and parts[0] in ("self", "super()"):
+        # 1. self.x / this.x / super().x / super.x
+        if len(parts) == 2 and parts[0] in SELF_NAMES + SUPER_NAMES:
             cls = self.enclosing_class(src)
             if cls:
                 own = f"{cls}.{parts[1]}"
-                if parts[0] == "self" and self._kind(own) in SYMBOL_KINDS:
+                if parts[0] in SELF_NAMES and self._kind(own) in SYMBOL_KINDS:
                     return [(own, EXTRACTED)]
                 base = self.base_method(cls, parts[1])
                 if base:
                     return [(base, INFERRED)]
-            if parts[0] == "super()":
+            if parts[0] in SUPER_NAMES:
                 return []  # base outside the repo (or object): don't guess
 
         # 2. import aliases
@@ -251,6 +276,8 @@ class _Resolver:
             dst = self.symbol(expanded)
             if dst:
                 return [(dst, EXTRACTED)]
+            if len(parts) == 1:
+                return []  # we know where the name comes from and it is no node: don't guess
 
         # 3. same file, then star imports
         dst = self.local(src, text) or self.star(file_id, text)
@@ -258,7 +285,8 @@ class _Resolver:
             return [(dst, EXTRACTED)]
 
         # 4. builtins
-        if parts[0].removesuffix("()") in BUILTINS:
+        known = JS_GLOBALS if language(file_id) in JS_LANGS else BUILTINS
+        if parts[0].removesuffix("()") in known:
             return []
 
         # 5. last name part: bare `f()` -> top-level functions/classes; `x.f()` -> methods

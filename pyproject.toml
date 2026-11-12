@@ -7,7 +7,7 @@ name = "repo-reaper"
 version = "0.1.0"
 description = "Map a code repository into a structural + semantic graph."
 requires-python = ">=3.11"
-dependencies = ["networkx"]
+dependencies = ["networkx", "tree-sitter>=0.23", "tree-sitter-javascript>=0.23", "tree-sitter-typescript>=0.23"]
 
 [project.optional-dependencies]
 dev = ["pytest"]

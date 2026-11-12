@@ -17,13 +17,14 @@ discover -> extract (per file and pure: one file in, nodes + raw refs out, no cr
 Incremental update = re-extract changed files, then resolve again.
 
 ## Stack
-Python 3.11+ stdlib (ast, json, hashlib, argparse, subprocess, urllib), networkx, pytest. No other dependencies without a note in HANDOFF.md.
+Python 3.11+ stdlib (ast, json, hashlib, argparse, subprocess, urllib), networkx, pytest; tree-sitter + tree-sitter-javascript + tree-sitter-typescript (Phase 10, user-approved). No other dependencies without a note in HANDOFF.md.
 Always use the conda env `repo-reaper` (defined in environment.yml; create with `conda env create -f environment.yml`): conda run -n repo-reaper python, conda run -n repo-reaper pytest -q, conda run -n repo-reaper reaper
 
 ## Layout
 reaper/cli.py          `reaper` entry point (argparse)
 reaper/discover.py     list files, language, sha256
 reaper/extract_py.py   Python AST extraction
+reaper/extract_js.py   JavaScript/TypeScript extraction (tree-sitter)
 reaper/resolve.py      raw refs -> edges
 reaper/graph.py        load/save .reaper/graph.json
 reaper/outputs.py      tree, summary, html, query
@@ -31,7 +32,7 @@ reaper/templates/graph.html  graph.html page template (package data)
 reaper/llm.py          Ollama client
 reaper/enrich.py       semantic passes
 tests/fixtures/sample_py/   small known repo used by all tests
-docs/phases/NN-slug/   GSD-style phase docs (Phase 8+): NN-CONTEXT, NN-RESEARCH, NN-PLAN, NN-*-SUMMARY, NN-VERIFICATION; Phase 9: NN-PLAN and NN-SUMMARY only
+docs/phases/NN-slug/   GSD-style phase docs (Phase 8+): NN-CONTEXT, NN-RESEARCH, NN-PLAN, NN-*-SUMMARY, NN-VERIFICATION; Phases 9-10: NN-PLAN and NN-SUMMARY only
 
 ## Data format (output dir: <repo>/.reaper/)
 graph.json:
@@ -109,7 +110,7 @@ ARCHITECTURE.md marked "LLM-generated".
   Goal: a newcomer clicks Tree and reads the graph like an editor's project tree: folders -> files -> classes and top-level functions -> methods, one column per depth from left to right, siblings top-down (folders first, then files, A-Z; symbols in source order). "contains" links are the tree's branches; imports, calls and inherits are bent curves drawn over it. Graph brings back the Phase 8 view where it was left.
   Rules: Graph mode stays exactly as in Phase 8 (force layout, look, Re-layout, camera and positions kept across switches; Phase 5/8 tests unchanged); only change, approved by the user: a Phase 8 bug fix so LLM group colours survive refresh(). Tree mode: positions computed in the page from the visible nodes (no physics; no new JS library or CDN; vis-network 9.1.9 stays); folder nodes exist only in the page (graph.json, semantic.json and CLI unchanged); Phase 8 node look, rows 40 px; labels: folder name, file basename, symbols as in Phase 8; first opens at the top of the tree at 100% zoom. Shared by both modes: selection, search, side panel, hop focus, filters and legend counts, LLM layer, deep links #node=<id>&hops=N, level of detail for big repos, Fit, Collapse all; data text only via textContent.
   Accept: pytest on the generated HTML: Tree mode on the fixture: x grows with depth and y follows the tree order (expected order written by hand from tests/fixtures/sample_py before coding), folder nodes present, branch vs relation edge styles; switching to Tree and back leaves the Graph positions and look unchanged; Phase 5/8 tests unchanged; the user confirms in the browser on this repo and on the 400-module synthetic repo.
-- [ ] Phase 10 (optional): More languages via tree-sitter-language-pack, same extract contract. (was Phase 8, then Phase 9; renumbered when Phase 8 "Interactive HTML view" and Phase 9 "Tree mode" were inserted)
+- [x] Phase 10 (optional): More languages: JavaScript + TypeScript via the official tree-sitter grammars (user choice over tree-sitter-language-pack, whose 1.x downloads parsers at runtime), same extract contract. Docs in docs/phases/10-more-languages/. (was Phase 8, then Phase 9; renumbered when Phase 8 "Interactive HTML view" and Phase 9 "Tree mode" were inserted)
 
 ## Session protocol
 Start: read HANDOFF.md; run `git log --oneline -5` and `conda run -n repo-reaper pytest -q`; say "This session: Phase N". Work on the phase HANDOFF.md marks partial, else the first unchecked phase. Only that 

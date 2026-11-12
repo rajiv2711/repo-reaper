@@ -2,7 +2,7 @@
 
 graph = {meta: {version, generated_at}, files, nodes, refs, edges}
 `files` lists every discovered file (its sha256 drives incremental updates);
-only files whose language has an extractor (Python so far) produce nodes and refs.
+only files whose language has an extractor (Python, JavaScript, TypeScript) produce nodes and refs.
 
 build() extracts every file; update() reuses the nodes and refs of files whose sha256
 is unchanged since the saved graph.json and re-extracts the rest. Both then rebuild all
@@ -17,7 +17,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reaper import extract_py
+from reaper import extract_js, extract_py
 from reaper.discover import discover
 from reaper.resolve import resolve
 
@@ -39,6 +39,8 @@ def extract_file(root: Path, rel: str, lang: str) -> tuple[list[dict], list[dict
     """(nodes, refs) for one file; ([], []) when no extractor handles its language."""
     if lang == "python":
         return extract_py.extract(rel, (root / rel).read_bytes(), extract_py.module_name(rel))
+    if lang in ("javascript", "typescript"):
+        return extract_js.extract(rel, (root / rel).read_bytes(), extract_js.module_name(rel))
     return [], []
 
 

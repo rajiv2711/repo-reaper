@@ -18,7 +18,7 @@ from pathlib import Path
 
 import networkx as nx
 
-from reaper.discover import count_by_language
+from reaper.discover import count_by_language, language
 from reaper.graph import graph_path
 
 NODE_KINDS = ("file", "class", "function", "method", "external")
@@ -58,6 +58,14 @@ def _children(graph: dict) -> dict[str, list[dict]]:
 
 def _symbol_line(n: dict) -> str:
     sig = n["signature"] or n["name"]
+    if language(n["file"] or "") in ("javascript", "typescript"):
+        if n["kind"] == "class":
+            text = sig if sig.startswith("interface ") else f"class {sig}"
+        elif n["kind"] == "function":
+            text = f"async function {sig[len('async '):]}" if sig.startswith("async ") else f"function {sig}"
+        else:
+            text = sig  # methods read as in the class body
+        return f"{text}  # L{n['line']}"
     if n["kind"] == "class":
         text = f"class {sig}"
     elif sig.startswith("async "):
