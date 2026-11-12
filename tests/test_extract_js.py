@@ -205,3 +205,20 @@ def test_anonymous_class_methods_are_not_functions():
 def test_src_specifier_is_a_repo_path():
     _, refs = extract("src/a/b.ts", b'import x from "src/models";\nimport "src/styles.css";\n', "a.b")
     assert [(r["target"], r["alias"]) for r in refs] == [("models.default", "x")]  # asset skipped
+
+
+def test_end_lines():
+    """Class/function/method nodes carry end_line; file nodes do not (counted by hand)."""
+    def span(rel, node_id):
+        n = nodes_of(rel)[node_id]
+        return n["line"], n["end_line"]
+
+    assert span(M, f"{M}::Named") == (4, 6)
+    assert span(M, f"{M}::Entity") == (9, 19)
+    assert span(M, f"{M}::Entity.describe") == (16, 18)
+    assert span(M, f"{M}::User") == (22, 33)
+    assert span(M, f"{M}::User.constructor") == (25, 28)
+    assert span(U, f"{U}::normalize") == (4, 6)
+    assert span(U, f"{U}::validate") == (9, 15)
+    assert span(C, f"{C}::UserCard") == (8, 15)
+    assert "end_line" not in nodes_of(M)[M]

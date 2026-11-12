@@ -305,13 +305,32 @@ def _page_node(n: dict, deg: dict[str, tuple[int, int]]) -> dict:
             "deg": sum(deg.get(n["id"], (0, 0)))}
 
 
-def graph_html(graph: dict, sem: dict | None = None) -> str:
+def _diff_view(graph: dict, d: dict) -> dict:
+    """The `diff` block of the page (reaper/diff.py result, page-shaped): statuses by node id and
+    by page edge id ("e<i>" = graph edge i, "x<j>" = removed edge j), and the nodes and edges the
+    current graph lacks (diffOnly; ghost = deleted), drawn only while Diff is on."""
+    added = {tuple(k) for k in d["edges"]["added"]}
+    edges = {f"e{i}": "added" for i, e in enumerate(graph["edges"])
+             if (e["src"], e["dst"], e["kind"]) in added}
+    extra_edges = []
+    for j, e in enumerate(d["edges"]["removed"]):
+        edges[f"x{j}"] = "removed"
+        extra_edges.append({**_vis_edge(e), "id": f"x{j}", "diffOnly": True})
+    extra_nodes = [{**_page_node(n, {}), "diffOnly": True,
+                    "ghost": d["nodes"].get(n["id"]) == "deleted"} for n in d["extra_nodes"]]
+    return {"base": d["base"], "commit": d["commit"], "branch": d["branch"], "files": d["files"],
+            "stats": d["stats"], "nodes": d["nodes"], "edges": edges,
+            "extra_nodes": extra_nodes, "extra_edges": extra_edges}
+
+
+def graph_html(graph: dict, sem: dict | None = None, diff: dict | None = None) -> str:
     """Single-file interactive view (vis-network from unpkg); dashed edges = not EXTRACTED.
 
     All nodes and edges are always embedded. Above MAX_HTML_NODES nodes or MAX_HTML_EDGES
     edges ("lod") the page opens at file level with the bundled file_edges() and expands
     files on demand. `sem` is the semantic layer built by the caller (None = structural view
-    only); it is passed through as data, never merged into node labels or titles.
+    only); it is passed through as data, never merged into node labels or titles. `diff`
+    (reaper/diff.py, optional) adds the Diff layer: what changed since a commit.
     """
     n_nodes, n_edges = len(graph["nodes"]), len(graph["edges"])
     lod = n_nodes > MAX_HTML_NODES or n_edges > MAX_HTML_EDGES
@@ -326,7 +345,7 @@ def graph_html(graph: dict, sem: dict | None = None) -> str:
             "nodes": [_page_node(n, deg) for n in graph["nodes"]],
             "edges": [{**_vis_edge(e), "id": f"e{i}"} for i, e in enumerate(graph["edges"])],
             "file_edges": file_edges(graph) if lod else [],
-            "sem": sem}
+            "sem": sem, "diff": _diff_view(graph, diff) if diff is not None else None}
     # "<" escaped so no text (e.g. a docstring with "</script>") can end the data block;
     # U+2028/U+2029 escaped so the blob is also safe as a JS string literal.
     blob = (json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -335,15 +354,15 @@ def graph_html(graph: dict, sem: dict | None = None) -> str:
 
 
 def export(root: str | os.PathLike, graph: dict, sem: dict | None = None,
-           out: str | os.PathLike | None = None) -> list[Path]:
+           out: str | os.PathLike | None = None, diff: dict | None = None) -> list[Path]:
     """Write TREE.txt, SUMMARY.md and graph.html next to graph.json; return their paths.
 
-    `sem` (optional semantic layer) only reaches graph.html."""
+    `sem` (optional semantic layer) and `diff` (optional, reaper/diff.py) only reach graph.html."""
     out_dir = graph_path(root, out).parent
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for name, text in (("TREE.txt", tree_file(graph)), ("SUMMARY.md", summary_md(graph)),
-                       ("graph.html", graph_html(graph, sem))):
+                       ("graph.html", graph_html(graph, sem, diff))):
         path = out_dir / name
         path.write_text(text, encoding="utf-8")
         written.append(path)

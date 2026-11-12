@@ -84,7 +84,7 @@ def test_symbol_nodes(sample_repo):
     nodes = by_id(run(sample_repo, "app/models.py")[0])
     assert nodes["app/models.py::User"] == {
         "id": "app/models.py::User", "kind": "class", "name": "User", "file": "app/models.py",
-        "line": 15, "signature": "User(Entity)", "doc": "A user with a name.",
+        "line": 15, "end_line": 24, "signature": "User(Entity)", "doc": "A user with a name.",
     }
     assert nodes["app/models.py::Entity"]["signature"] == "Entity"
     init = nodes["app/models.py::Entity.__init__"]
@@ -258,3 +258,19 @@ def test_nested_async_and_duplicates():
         ("m.py::A.run", "helper"),
         ("m.py", "functools.lru_cache"),   # decorator call runs in the enclosing scope
     ]                                      # handlers[0]() has no name: no ref
+
+
+def test_end_lines(sample_repo):
+    """Class/function/method nodes carry end_line (last line of the body); file nodes do not.
+    Values counted by hand from tests/fixtures/sample_py/app/models.py."""
+    nodes = by_id(run(sample_repo, "app/models.py")[0])
+    spans = {i: (n["line"], n["end_line"]) for i, n in nodes.items() if n["kind"] != "file"}
+    assert spans == {
+        "app/models.py::Entity": (4, 12),
+        "app/models.py::Entity.__init__": (7, 8),
+        "app/models.py::Entity.describe": (10, 12),
+        "app/models.py::User": (15, 24),
+        "app/models.py::User.__init__": (18, 20),
+        "app/models.py::User.label": (22, 24),
+    }
+    assert "end_line" not in nodes["app/models.py"]

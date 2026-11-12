@@ -5,3 +5,4 @@ __pycache__/
 physnemo_test/
 build/
 dist/
+.idea/

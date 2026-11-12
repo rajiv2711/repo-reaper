@@ -62,7 +62,8 @@ __LEGEND__
   .acts { display: inline-flex; gap: 6px; }
   #bar > strong { font-size: 15px; letter-spacing: 0.2px; margin-right: 4px; }
   #bar input[type=checkbox], #legend input[type=checkbox] { accent-color: #4c78a8; }
-  #llm-toggle { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+  #llm-toggle, #diff-toggle { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+  .badge.diff { color: #fff; }
   :focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
   .tag { font-size: 12px; padding: 1px 7px; border: 1px solid var(--chip-line); border-radius: 10px;
          color: var(--muted); white-space: nowrap; cursor: help; }
@@ -153,6 +154,7 @@ __LEGEND__
   <button id="relayout" title="Run the force layout again">Re-layout</button>
   </span>
   <label id="llm-toggle" hidden><input type="checkbox" checked> LLM layer</label>
+  <label id="diff-toggle" hidden><input type="checkbox" checked> Diff</label>
   <span id="lod-note" class="tag" hidden>file-level view</span>
   <span id="status">Loading vis-network 9.1.9 ...</span>
   <label id="theme-pick" title="Colour theme; Auto follows the system setting">Theme <select id="theme"><option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
@@ -162,6 +164,7 @@ __LEGEND__
   <input id="search">
   <ol id="results"></ol>
   <div id="legend">
+    <div id="diff-legend"></div>
     <h3>Nodes</h3>
     <label><input type="checkbox" data-node-kind="file" checked> <span class="sw box kind-file"></span> file <span class="count"></span></label>
     <label><input type="checkbox" data-node-kind="class" checked> <span class="sw kind-class"></span> class <span class="count"></span></label>
@@ -191,6 +194,14 @@ __LEGEND__
 // Data and LLM text reach the DOM only through textContent / createElement (never as markup).
 // Top level: parse D, style D.edges, build indexes, set state, define functions, boot().
 const D = JSON.parse(document.getElementById("graph-data").textContent);
+// Diff layer (`reaper diff`): the nodes and edges the current graph lacks (deleted ones as ghosts,
+// changed files that are not parsed) join the data marked diffOnly; they are drawn only while Diff
+// is on. D.diff.nodes / D.diff.edges give the status by id (added | modified | deleted / removed).
+if (D.diff) {
+  D.nodes.push(...D.diff.extra_nodes);
+  D.edges.push(...D.diff.extra_edges);
+}
+let diffOn = !!D.diff;
 
 const NODE_KINDS = ["file", "class", "function", "method", "external"];
 const EDGE_KINDS = ["contains", "imports", "inherits", "calls"];
@@ -201,6 +212,10 @@ const KIND_COLOR = {file: "#4c78a8", class: "#b279a2", function: "#54a24b", meth
 const EDGE_COLORS = {contains: "#b0b0b0", imports: "#4c78a8", inherits: "#b279a2", calls: "#f58518"};
 const DASH = {INFERRED: [8, 6], AMBIGUOUS: [2, 4]};
 const BUNDLE_COLOR = "#888";
+// Diff layer fills (white box labels stay readable on all three) and the ghost look of deleted nodes.
+const DIFF_COLORS = {added: "#2f8a3a", modified: "#b26b00", deleted: "#c0392b"};
+const DIFF_LETTER = {added: "A", modified: "M", deleted: "D"};
+const GHOST_OPACITY = 0.55;
 const RELAYOUT_MS = 3000;
 const MAX_RESULTS = 30;
 // Group colours of the LLM layer (cycled); files in no group are grey, externals keep KIND_COLOR.
@@ -214,10 +229,10 @@ const GROUP_COLORS_DARK = GROUP_COLORS.map(c => ({"#8c564b": "#c49c94", "#393b79
 // labels with a halo in the surface colour, quiet branch lines and no-group files, dark folder boxes
 // and a light ring on the selected / hovered node (vis's darkened border vanishes on dark).
 const INKS = {
-  light: {surface: "#ffffff", label: "#343434", halo: 0, branch: "#b0b0b0", noGroup: "#c7c7c7",
+  light: {surface: "#ffffff", label: "#343434", halo: 0, branch: "#b0b0b0", noGroup: "#c7c7c7", unchanged: "#8a8a8a",
           groups: GROUP_COLORS, dir: {background: "#eeeeee", border: "#9e9e9e"}, dirLabel: "#222",
           ring: null},
-  dark: {surface: "#1a1a19", label: "#f0efec", halo: 3, branch: "#5f5e5a", noGroup: "#6b6a65",
+  dark: {surface: "#1a1a19", label: "#f0efec", halo: 3, branch: "#5f5e5a", noGroup: "#6b6a65", unchanged: "#6b6a65",
          groups: GROUP_COLORS_DARK, dir: {background: "#2c2c2a", border: "#6b6a65"}, dirLabel: "#f0efec",
          ring: {selected: "#ffffff", hover: "#c3c2b7"}}
 };
@@ -347,7 +362,7 @@ for (const e of D.edges) {
 // folder id -> number of graph files below it (the "(N)" of a closed folder's label).
 const FILES_IN = new Map();
 for (const n of D.nodes) {
-  if (n.kind !== "file") continue;
+  if (n.kind !== "file" || n.ghost) continue;
   for (let p = parentOf.get(n.id); p !== undefined; p = parentOf.get(p)) FILES_IN.set(p, (FILES_IN.get(p) || 0) + 1);
 }
 // Tree mode's page-only branch edges folder -> subfolder / file; drawn while treeLayout lists them.
@@ -372,6 +387,8 @@ const searchKeys = D.nodes.map(n => ({id: n.id, deg: n.deg || 0, name: String(n.
 const state = {kinds: new Set(NODE_KINDS), ekinds: new Set(EDGE_KINDS), conf: new Set(CONFS),
                hops: 1, center: null, focus: null, selected: null, expanded: new Set(),
                closed: new Set()};  // closed: Tree mode folders / files shown as one row (Graph ignores it)
+// File-level view with a diff: changed files start expanded, so their changed symbols are drawn.
+if (D.diff && D.lod) for (const id of Object.keys(D.diff.nodes)) if (symbolsOf.has(id)) state.expanded.add(id);
 
 // Assigned in start() (vis loaded). shown = the visible sets V of the last refresh();
 // placed = state.expanded at the last refresh (files whose symbols already have a ring).
@@ -420,6 +437,7 @@ function bundleParts(f) {
 function applyView() {
   const vn = new Set(), raw = new Set(), agg = new Set();
   for (const n of D.nodes) {
+    if (n.diffOnly && !diffOn) continue;
     if (n.id === state.selected ||
         (state.kinds.has(n.kind) && (!state.focus || state.focus.has(n.id)) &&
          (!D.lod || n.kind === "file" || n.kind === "external" || state.expanded.has(n.file)))) {
@@ -428,6 +446,7 @@ function applyView() {
   }
   for (const e of D.edges) {
     if (state.ekinds.has(e.kind) && state.conf.has(e.confidence) && vn.has(e.from) && vn.has(e.to) &&
+        (!e.diffOnly || diffOn) &&
         (!D.lod || (state.expanded.has(fileOf(e.from)) && state.expanded.has(fileOf(e.to))))) {
       raw.add(e.id);
     }
@@ -471,8 +490,34 @@ function bundleEdge(f) {
 // Tree mode edge items (copies; D.edges stays as Graph mode uses it): contains = branch look,
 // relations bend; Phase 8 colours and dashes kept; then the folder branches and the bundles.
 function treeEdgeItems() {
-  return D.edges.map(e => ({...e, ...(e.kind === "contains" ? branchLook() : {smooth: {...RELATION_SMOOTH}})}))
-    .concat(BRANCH_EDGES, D.file_edges.map(bundleEdge));
+  return D.edges.map(treeEdgeBase).concat(BRANCH_EDGES, D.file_edges.map(bundleEdge));
+}
+
+function treeEdgeBase(e) {
+  return {...e, ...(e.kind === "contains" ? branchLook() : {smooth: {...RELATION_SMOOTH}})};
+}
+
+// Look of a link the change added or removed while Diff is on (else null): added = green, removed =
+// red dashed; both 2 px and never calmed in Tree, so they stand out over the tree.
+function diffEdgeLook(e) {
+  const st = diffOn && D.diff.edges[e.id];
+  if (!st) return null;
+  return st === "added" ? {color: {color: DIFF_COLORS.added, opacity: 1}, width: 2, dashes: e.dashes || false}
+                       : {color: {color: DIFF_COLORS.deleted, opacity: 0.8}, width: 2, dashes: [4, 4]};
+}
+
+// A Graph edge's look fields (DataSet update): as loaded, or its Diff look.
+function graphEdgeItem(e) {
+  return {id: e.id, color: e.color, width: 1, dashes: e.dashes || false, ...diffEdgeLook(e)};
+}
+
+// A Tree edge as stored: calm(), or the Diff look of a new or removed link (kept on hover).
+function treeLook(e) {
+  const d = diffEdgeLook(e);
+  STRONG.delete(e.id);
+  if (!d) return calm(e);
+  STRONG.set(e.id, {width: d.width, opacity: d.color.opacity});
+  return {...e, ...d};
 }
 
 // A Tree edge as stored in the Tree DataSet: branches (kind contains) as they are; relations, file and
@@ -587,12 +632,16 @@ function treeView(V) {
     if (at === id) T.nodes.add(id);
     else T.closed.add(at);
   }
-  const fold = (from, to, kind, conf, n) => {
+  const fold = (from, to, kind, conf, n, st) => {
     const id = "d:" + from + " -> " + to;
     if (!T.folds.has(id)) T.folds.set(id, {id, from, to, counts: {}});
-    const counts = T.folds.get(id).counts;
+    const f = T.folds.get(id), counts = f.counts;
     counts[kind] = counts[kind] || {};
     counts[kind][conf] = (counts[kind][conf] || 0) + n;
+    if (st) {  // Diff on: how many of the folded links are new / removed
+      f.diff = f.diff || {};
+      f.diff[st] = (f.diff[st] || 0) + n;
+    }
   };
   const route = (from, to, keep, add) => {
     const a = standIn(from), b = standIn(to);
@@ -601,7 +650,7 @@ function treeView(V) {
   };
   for (const id of V.raw) {
     const e = edgeById.get(id);
-    route(e.from, e.to, () => T.raw.add(id), (a, b) => fold(a, b, e.kind, e.confidence, 1));
+    route(e.from, e.to, () => T.raw.add(id), (a, b) => fold(a, b, e.kind, e.confidence, 1, diffOn && D.diff.edges[id]));
   }
   for (const id of V.agg) {
     const f = bundleById.get(id);
@@ -633,6 +682,19 @@ function autoClosed(V, budget = TREE_ROWS) {
   }
   state.closed = keep;
   return closed;
+}
+
+// With Diff on, the folders and files Tree mode closes when it is first built: every closable one
+// except the folders on the way to a changed node and the changed files themselves.
+function diffClosed() {
+  const open = new Set();
+  for (const id of Object.keys(D.diff.nodes)) {
+    if (!byId.has(id)) continue;
+    if (byId.get(id).kind === "file") open.add(id);
+    for (let p = parentOf.get(id); p !== undefined; p = parentOf.get(p)) open.add(p);
+  }
+  const all = [...DIRS.keys()].concat(D.nodes.filter(n => closable(n.id)).map(n => n.id));
+  return new Set(all.filter(id => !open.has(id)));
 }
 
 // What Tree mode can close: folders, and files with symbols outside the file-level view (there a
@@ -675,13 +737,20 @@ function bundleStyle(f) {
   const base = parts.length === 1 ? (EDGE_COLORS[parts[0][0]] || BUNDLE_COLOR) : BUNDLE_COLOR;
   const detail = parts.map(([kind, n, confs]) =>
     kind + " " + n + ": " + confs.map(([c, k]) => c + " " + k).join(", ")).join("; ");
-  return {
+  const look = {
     dashes: best === "INFERRED" || best === "AMBIGUOUS" ? DASH[best] : false,
     color: best === "AMBIGUOUS" ? {color: base, opacity: 0.5} : base,
     width: total > 0 ? Math.min(8, 1 + Math.log2(total)) : 1,
     title: pathOf(f.from) + " -> " + pathOf(f.to) + ": " + total + (total === 1 ? " edge" : " edges") +
            (detail ? " (" + detail + ")" : "")
   };
+  const d = diffOn && f.diff;  // Diff on: new links make it green, else removed ones red dashed
+  if (d && (d.added || d.removed)) {
+    look.color = d.added ? DIFF_COLORS.added : DIFF_COLORS.deleted;
+    if (!d.added) look.dashes = [4, 4];
+    look.title += "; " + (d.added || 0) + " new, " + (d.removed || 0) + " removed since " + D.diff.base;
+  }
+  return look;
 }
 
 // An id as people read it: a page-only folder by its path ("dir:app/" -> "app/"), else the id.
@@ -726,7 +795,7 @@ function bfs(id, hops) {
     const next = [];
     for (const x of frontier) {
       for (const e of adj.get(x) || []) {
-        if (!state.ekinds.has(e.kind) || !state.conf.has(e.confidence)) continue;
+        if (!state.ekinds.has(e.kind) || !state.conf.has(e.confidence) || (e.diffOnly && !diffOn)) continue;
         const y = e.from === x ? e.to : e.from;
         if (!seen.has(y)) {
           seen.add(y);
@@ -780,6 +849,7 @@ function rank(q) {
   if (!q) return [];
   const hits = [];
   for (const k of searchKeys) {
+    if (!diffOn && byId.get(k.id).diffOnly) continue;
     const tier = k.name === q ? 1 : k.name.startsWith(q) ? 2 : k.name.includes(q) ? 3 :
                  k.lid.includes(q) ? 4 : k.sig.includes(q) ? 5 : 0;
     if (tier) hits.push([tier, k]);
@@ -788,15 +858,18 @@ function rank(q) {
   return hits.slice(0, MAX_RESULTS).map(h => h[1].id);
 }
 
-// Every edge touching id, by panel section: {section: [[otherId, confidence], ...]} sorted by id.
+// Every edge touching id, by panel section: {section: [[otherId, confidence], ...]} sorted by id;
+// with Diff on, a new or removed link has its status third ([otherId, confidence, "added"]).
 function relations(id) {
   const out = {};
   for (const k of REL_ORDER) out[k] = [];
   for (const e of D.edges) {
     const r = REL[e.kind];
-    if (!r) continue;
-    if (e.from === id) out[r[0]].push([e.to, e.confidence]);
-    if (e.to === id) out[r[1]].push([e.from, e.confidence]);
+    if (!r || (e.diffOnly && !diffOn)) continue;
+    const st = diffOn ? D.diff.edges[e.id] : undefined;
+    const item = other => (st ? [other, e.confidence, st] : [other, e.confidence]);
+    if (e.from === id) out[r[0]].push(item(e.to));
+    if (e.to === id) out[r[1]].push(item(e.from));
   }
   const cmp = (a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0);
   for (const k of REL_ORDER) out[k].sort(cmp);
@@ -835,10 +908,19 @@ function groupHeading() {
 
 // The colour to send with a node position update (both modes): vis re-applies the group style to a
 // node updated without a colour, so with semantic.json the LLM colour travels with every position.
-// {} without semantic.json and for page-only folders.
+// {} without semantic.json (and without a diff) and for page-only folders. While Diff is on, a
+// changed node gets its status fill (a deleted one the ghost look) and the rest a neutral grey.
 function llmColour(id) {
   const n = byId.get(id);
-  return D.sem && n ? {color: nodeColor(n, llmOn)} : {};
+  if (!n) return {};
+  const st = diffOn ? D.diff.nodes[id] : undefined;  // Diff on: the status fill wins
+  if (st && n.ghost) {
+    return {color: {background: DIFF_COLORS.deleted, border: DIFF_COLORS.deleted}, opacity: GHOST_OPACITY,
+            shapeProperties: {borderDashes: [4, 3]}};
+  }
+  if (st) return {color: DIFF_COLORS[st]};
+  if (diffOn) return {color: INK.unchanged};  // only the changes carry colour
+  return D.sem || D.diff ? {color: nodeColor(n, llmOn)} : {};
 }
 
 // Node colour: the group palette while the LLM layer is on (and groups exist), else the kind colour.
@@ -943,6 +1025,14 @@ function renderDetails(id) {
   if (n.signature) out.push(el("div", "meta mono", n.signature));
   if (n.file) out.push(el("div", "meta mono", n.file + (n.line !== null && n.line !== undefined ? ":" + n.line : "")));
   if (n.doc) out.push(el("div", "doc", n.doc));
+  const st = diffOn ? D.diff.nodes[id] : undefined;
+  if (st) {
+    const line = el("div", "meta");
+    line.appendChild(diffBadge(st, DIFF_LETTER[st]));
+    const stat = n.kind === "file" ? statText(D.diff.stats[id]) : "";
+    line.appendChild(el("span", "", " " + st + " since " + D.diff.base + (stat ? "  " + stat : "")));
+    out.push(line);
+  }
   const f = D.sem && D.sem.files ? D.sem.files[fileOf(id)] : null;
   if (f) {
     const block = el("div", "llm llm-block");
@@ -958,7 +1048,7 @@ function renderDetails(id) {
     if (!rel[section].length) continue;
     out.push(el("h3", "", section + " (" + rel[section].length + ")"));
     const ul = el("ul", "rel");
-    for (const [other, conf] of rel[section]) {
+    for (const [other, conf, change] of rel[section]) {
       const b = el("button", "", other);
       b.type = "button";
       b.addEventListener("click", () => pick(other));
@@ -967,6 +1057,7 @@ function renderDetails(id) {
       const li = el("li");
       li.appendChild(b);
       li.appendChild(badge);
+      if (change) li.appendChild(diffBadge(change, change === "added" ? "new" : "removed"));
       ul.appendChild(li);
     }
     out.push(ul);
@@ -986,6 +1077,7 @@ function topNodes(k) {
 // picks it, with its edge count) and the keys. Plain text only.
 function renderHome() {
   const out = [el("p", "hint", "Select a node, search, or start from a most-connected node.")];
+  if (diffOn) out.push(...renderChanges());
   const top = topNodes(HOME_TOP);
   if (top.length) {
     out.push(el("h3", "", "Most connected"));
@@ -1011,6 +1103,88 @@ function renderHome() {
   }
   out.push(keys);
   document.getElementById("details").replaceChildren(...out);
+}
+
+// Diff layer: the changed files as rows [path, letter, "+added -removed"] (sorted by path).
+function changeRows() {
+  return Object.entries(D.diff.files).map(([p, st]) => [p, DIFF_LETTER[st], statText(D.diff.stats[p])]);
+}
+
+function statText(s) {
+  if (s === null) return "binary";
+  if (!s) return "";
+  return [s[0] ? "+" + s[0] : "", s[1] ? "-" + s[1] : ""].filter(Boolean).join(" ");
+}
+
+// "since HEAD (d53b384, branch main)": what the diff compares with.
+function diffWhere() {
+  const d = D.diff;
+  return "since " + d.base + " (" + d.commit.slice(0, 7) + (d.branch ? ", branch " + d.branch : "") + ")";
+}
+
+function diffBadge(st, text) {
+  const b = el("span", "badge diff", text);
+  b.style.background = DIFF_COLORS[st === "removed" ? "deleted" : st];
+  return b;
+}
+
+// The Home panel's change list: every changed file (a button that picks it) with A / M / D and its
+// line counts. Plain text only.
+function renderChanges() {
+  const rows = changeRows();
+  const head = el("h3", "", (rows.length ? rows.length + (rows.length === 1 ? " file" : " files") + " changed "
+                                         : "No changes ") + diffWhere());
+  if (!rows.length) return [head];
+  const ul = el("ul", "rel");
+  for (const [path, letter, stat] of rows) {
+    const li = el("li");
+    li.appendChild(diffBadge(D.diff.files[path], letter));
+    const b = el("button", "", " " + path);
+    b.type = "button";
+    b.addEventListener("click", () => pick(path));
+    li.appendChild(b);
+    if (stat) li.appendChild(el("span", "count", " " + stat));
+    ul.appendChild(li);
+  }
+  return [head, ul];
+}
+
+// Legend section of the Diff layer: what the colours mean, with how many nodes and links have each.
+function renderDiffLegend() {
+  const sec = el("div");
+  sec.appendChild(el("h3", "", "Diff " + diffWhere()));
+  const count = st => Object.values(D.diff.nodes).filter(s => s === st).length;
+  const links = st => Object.keys(D.diff.edges).filter(i => D.diff.edges[i] === st &&
+                                                      edgeById.get(i).kind !== "contains").length;
+  for (const [st, what, n] of [["added", "added", count("added")], ["modified", "modified", count("modified")],
+                               ["deleted", "deleted (ghost)", count("deleted")],
+                               ["added", "new link", links("added")], ["deleted", "removed link", links("removed")]]) {
+    const r = el("div", "grow");
+    const link = what.endsWith("link");
+    const sw = el("span", link ? (st === "deleted" ? "k inferred" : "k") : "sw");
+    if (link) sw.style.borderColor = DIFF_COLORS[st]; else sw.style.background = DIFF_COLORS[st];
+    r.appendChild(sw);
+    r.appendChild(el("span", "gname", " " + what));
+    r.appendChild(el("span", "count", n));
+    sec.appendChild(r);
+  }
+  document.getElementById("diff-legend").replaceChildren(sec);
+}
+
+// The Diff switch: status fills, ghosts, new / removed links and the change list on or off.
+function setDiff(on) {
+  diffOn = on;
+  const colours = D.nodes.map(n => ({id: n.id, ...llmColour(n.id)}));
+  const changed = Object.keys(D.diff.edges).map(id => edgeById.get(id));
+  nodes.update(colours);
+  edges.update(changed.map(graphEdgeItem));
+  if (tnodes) tnodes.update(colours);
+  if (tedges) tedges.update(changed.map(e => treeLook(treeEdgeBase(e))));
+  if (state.selected && !applyView().nodes.has(state.selected)) state.selected = state.center = state.focus = null;
+  refocus();
+  refresh();
+  if (state.selected) renderDetails(state.selected);
+  else renderHome();
 }
 
 // Page keys, not while typing in a field and not with Ctrl / Alt / Meta: "/" search, g Graph,
@@ -1060,8 +1234,8 @@ function setHl(i) {
 function setLLM(on) {
   llmOn = on;
   document.body.classList.toggle("llm-off", !on);
-  nodes.update(D.nodes.map(n => ({id: n.id, color: nodeColor(n, on)})));
-  if (tnodes) tnodes.update(D.nodes.map(n => ({id: n.id, color: nodeColor(n, on)})));
+  nodes.update(D.nodes.map(n => ({id: n.id, ...llmColour(n.id)})));
+  if (tnodes) tnodes.update(D.nodes.map(n => ({id: n.id, ...llmColour(n.id)})));
   if (!on && activeTab === "arch") showTab("details");
 }
 
@@ -1249,6 +1423,10 @@ function start() {
   nodes = new vis.DataSet(D.nodes);
   edges = new vis.DataSet(D.edges.concat(D.file_edges.map(f => ({id: f.id, from: f.from, to: f.to,
                                                                   ...bundleStyle(f)}))));
+  if (D.diff) {  // Diff layer: status fills and new / removed links from the start
+    nodes.update(D.nodes.map(n => ({id: n.id, ...llmColour(n.id)})));
+    edges.update(Object.keys(D.diff.edges).map(id => graphEdgeItem(edgeById.get(id))));
+  }
   shown = applyView();
   placed = new Set(state.expanded);
   nodeView = new vis.DataView(nodes, {filter: n => shown.nodes.has(n.id)});
@@ -1331,6 +1509,13 @@ function start() {
     setLLM(true);
     box.addEventListener("change", ev => setLLM(ev.target.checked));
   }
+  if (D.diff) {  // Diff layer: on, with its own switch, legend section and change list
+    renderDiffLegend();
+    const toggle = document.getElementById("diff-toggle");
+    toggle.hidden = false;
+    toggle.title = "Colour what changed " + diffWhere() + ": green added, amber modified, red deleted";
+    document.querySelector("#diff-toggle input").addEventListener("change", ev => setDiff(ev.target.checked));
+  }
   initModes();
 }
 
@@ -1385,14 +1570,15 @@ function setMode(m) {
 }
 
 // Tree mode's own DataSets, views and network (physics off, positions from treeLayout). The
-// folders autoClosed() picks for the whole tree (not the focus) start closed; a selection made in
+// folders autoClosed() picks for the whole tree (not the focus) start closed (with Diff on:
+// diffClosed(), everything but the way to the changes); a selection made in
 // Graph is revealed.
 function startTree() {
   tnodes = new vis.DataSet(treeNodeItems());
-  tedges = new vis.DataSet(treeEdgeItems().map(calm));
+  tedges = new vis.DataSet(treeEdgeItems().map(treeLook));
   const focus = state.focus;
   state.focus = null;
-  state.closed = autoClosed(applyView());
+  state.closed = diffOn && Object.keys(D.diff.nodes).length ? diffClosed() : autoClosed(applyView());
   state.focus = focus;
   if (state.selected) reveal(state.selected);
   const V = applyView();
@@ -1446,13 +1632,21 @@ function boot() {
     s.src = JSDELIVR_URL;
     s.integrity = JSDELIVR_SRI;
     s.crossOrigin = "anonymous";
-    s.onload = () => { if (typeof vis === "undefined") cdnFailed(); else start(); };
+    s.onload = () => { if (typeof vis === "undefined") cdnFailed(); else { start(); openTree(); } };
     s.onerror = cdnFailed;
     setStatus("Loading vis-network 9.1.9 from cdn.jsdelivr.net ...");
     document.head.appendChild(s);
   } else {
     start();
+    openTree();
   }
+}
+
+// Tree is the view the page opens in: the Graph network lays itself out hidden (its first layout
+// runs while Graph is the mode, as Phase 8 expects), then Tree is shown.
+function openTree() {
+  document.getElementById("net").classList.add("off");
+  net.once("stabilizationIterationsDone", () => setMode("tree"));
 }
 
 // ---------------------------------------------------------------- Theme (Auto | Light | Dark)
@@ -1504,7 +1698,7 @@ function applyTheme() {
   for (const [network, ds, es, groups, branchIds] of views) {
     if (!network) continue;
     const pos = network.getPositions();
-    if (D.sem) ds.update(D.nodes.map(n => ({id: n.id, color: nodeColor(n, llmOn)})));
+    if (D.sem || D.diff) ds.update(D.nodes.map(n => ({id: n.id, ...llmColour(n.id)})));
     ds.update(Object.keys(pos).map(id => ({id, x: pos[id].x, y: pos[id].y, ...llmColour(id)})));
     es.update(branchIds.map(id => ({id, color: INK.branch})));
     network.setOptions({...look, groups});

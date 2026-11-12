@@ -146,3 +146,20 @@ def query_key(mode: str) -> list[str]:
                    "listed, linked to another NAME, or under 'not linked'; not covered: NAME passed "
                    "as a value or renamed, getattr/importlib/config strings")
     return key
+
+
+DIFF = {
+    "added": "in the tree now, not at the base commit (untracked files count)",
+    "modified": "a changed, non-blank line falls inside it and inside no deeper symbol (a changed "
+                "method marks the method, not its class); for a file, git sees it changed",
+    "deleted": "at the base commit, not in the tree now (drawn as a ghost)",
+    "links": "calls, imports and inherits in the graph now but not in the graph at the base (new), "
+             "or the other way round (removed)",
+}
+
+
+def diff_key() -> list[str]:
+    """Two short lines under a `reaper diff` answer."""
+    return ["key: A added, M modified, D deleted; a modified symbol has a changed line inside it "
+            "(a changed method marks the method, not its class)",
+            "links: " + DIFF["links"] + "; graph.html shows them with Diff on"]

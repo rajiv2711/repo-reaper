@@ -91,7 +91,7 @@ class _Extractor(ast.NodeVisitor):
             self.ids.add(node_id)
             self.nodes.append({
                 "id": node_id, "kind": kind, "name": node.name, "file": self.path,
-                "line": node.lineno, "signature": signature,
+                "line": node.lineno, "end_line": node.end_lineno, "signature": signature,
                 "doc": _first_line(ast.get_docstring(node)),
             })
         return node_id

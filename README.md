@@ -77,6 +77,7 @@ The argument `<repo>` is the root of the repository to map. Every command except
 | `reaper export <repo>` | Writes TREE.txt, SUMMARY.md and graph.html from graph.json. |
 | `reaper query <repo> callers\|callees\|subclasses\|deps NAME` | Answers one question in one call (see [query](#query)). NAME can be a node id, a qualified name (`UserService.create`), a module name (`app.service`) or a plain name. |
 | `reaper enrich <repo> --pass files\|groups\|architecture` | Runs one LLM pass, then rewrites graph.html so the page shows the new results. |
+| `reaper diff <repo>` | What changed since the last commit (staged, unstaged and untracked): the files, the functions inside them and the links (calls, imports, inherits) that appeared or disappeared. Prints the list and writes the outputs with graph.html's Diff layer on (see [diff](#diff)). `--base REF` compares with another commit or branch. |
 | `reaper rules <repo>` | Prints a Markdown block to paste into CLAUDE.md or AGENTS.md: what the graph is, how far an agent can trust it, and how to query it (see [rules](#rules)). Writes nothing. |
 
 Options:
@@ -139,6 +140,36 @@ physicsnemo, agents whose instructions held an explicit trust rule used 22% fewe
 reaper rules ~/code/myapp >> ~/code/myapp/CLAUDE.md
 ```
 
+### diff
+
+To see what an agent (or you) touched before committing:
+
+```
+$ reaper diff .
+changes since HEAD (d53b384, branch main): 30 files: 9 added, 21 modified, 0 deleted
+  M  reaper/cli.py  +39 -1
+       A  cmd_diff  (line 108)
+       M  build_parser  (line 238)
+  A  reaper/diff.py  +254
+  ...
+  M  reaper/resolve.py  +19 -8
+       M  _Resolver._add  (line 173)
+links: 144 new, 6 removed (imports +27, calls +117 -6)
+```
+
+- A file is **added** (in the tree now, not at the base; untracked files count, ignored ones do
+  not), **modified** or **deleted**.
+- A function, class or method is modified when a changed, non-blank line falls inside it and in no
+  deeper one: a changed method marks the method, not its class.
+- **Links** compare the graph now with the graph at the base (rebuilt from the base's version of
+  the changed files), so a call into a deleted function shows as removed even when the calling
+  file did not change.
+- graph.html opens in Tree with the changes filled (green added, amber modified, red dashed ghost
+  for deleted), new links green, removed links red dashed, and everything else grey. Only the
+  folders leading to a change and the changed files are open. The **Diff** box in the toolbar
+  switches the layer off; the panel lists the changed files. A later `reaper run` writes the page
+  without the Diff layer.
+
 ## Outputs
 
 All outputs go to `<repo>/.reaper/`, or to the `--out` directory. Each one explains its own labels
@@ -157,7 +188,7 @@ and a two-line key under every `query` answer. The text comes from one place, `r
 | `ARCHITECTURE.md` | The LLM's architecture overview, marked "LLM-generated" (only after the architecture pass) |
 
 Each node is `{id, kind, name, file, line, signature, doc}` with kind `file`, `class`, `function`,
-`method` or `external`. The id is the file's relative path (`app/service.py`), the symbol under
+`method` or `external`; classes, functions and methods also have `end_line` (their last line). The id is the file's relative path (`app/service.py`), the symbol under
 it (`app/service.py::UserService.create`), or `ext:<package>` for something outside the repo.
 Each edge is `{src, dst, kind, confidence, lines}` with kind `contains`, `imports`, `calls` or
 `inherits`; `lines` are the lines in src's file the edge comes from (call sites, the import, the
@@ -206,7 +237,7 @@ most-connected nodes.*
 is open to its functions, and the other files are closed (the number is how many symbols they
 hold). Calls and imports are drawn as curves over the tree.*
 
-- **Views.** Graph is a force layout; Re-layout and Fit are in the toolbar. Tree lays the repo out
+- **Views.** The page opens in Tree. Graph is a force layout; Re-layout and Fit are in the toolbar. Tree lays the repo out
   left to right like an editor's project tree: folders, then files, then classes and functions,
   then methods. Imports, calls and inheritance are drawn as curves over it. In Tree,
   double-click a folder or file to open or close it; edges into a closed one are bundled.

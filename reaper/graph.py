@@ -22,7 +22,7 @@ from reaper import extract_js, extract_py, legend
 from reaper.discover import discover
 from reaper.resolve import resolve
 
-VERSION = 2  # 2: edges carry `lines`
+VERSION = 3  # 2: edges carry `lines`; 3: symbol nodes carry `end_line`
 OUT_DIR = ".reaper"
 
 
@@ -44,10 +44,20 @@ def new_graph(files: dict, nodes: list, refs: list, edges: list) -> dict:
 
 def extract_file(root: Path, rel: str, lang: str) -> tuple[list[dict], list[dict]]:
     """(nodes, refs) for one file; ([], []) when no extractor handles its language."""
+    if lang not in EXTRACTED_LANGS:
+        return [], []
+    return extract_source(rel, lang, (root / rel).read_bytes())
+
+
+EXTRACTED_LANGS = ("python", "javascript", "typescript")
+
+
+def extract_source(rel: str, lang: str, source: bytes) -> tuple[list[dict], list[dict]]:
+    """(nodes, refs) for one file's content (e.g. an older version from git)."""
     if lang == "python":
-        return extract_py.extract(rel, (root / rel).read_bytes(), extract_py.module_name(rel))
+        return extract_py.extract(rel, source, extract_py.module_name(rel))
     if lang in ("javascript", "typescript"):
-        return extract_js.extract(rel, (root / rel).read_bytes(), extract_js.module_name(rel))
+        return extract_js.extract(rel, source, extract_js.module_name(rel))
     return [], []
 
 

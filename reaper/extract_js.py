@@ -207,7 +207,8 @@ class _Extractor:
             self.ids.add(node_id)
             self.nodes.append({
                 "id": node_id, "kind": kind, "name": name, "file": self.path,
-                "line": node.start_point[0] + 1, "signature": signature, "doc": self._doc(node),
+                "line": node.start_point[0] + 1, "end_line": node.end_point[0] + 1,
+                "signature": signature, "doc": self._doc(node),
             })
         return node_id
 

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from reaper import __version__, enrich, legend, llm, outputs
+from reaper.diff import DiffError, diff, format_diff
 from reaper.discover import count_by_language, discover
 from reaper.graph import build, graph_path, load, save, update
 
@@ -101,6 +102,22 @@ def cmd_query(args: argparse.Namespace) -> int:
         print(json.dumps(results, indent=1, ensure_ascii=False))
     else:
         print(outputs.format_query(args.mode, results, budget=args.budget), end="")
+    return 0
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Update the graph, compare the working tree with --base, write the outputs with the Diff
+    layer in graph.html and print the changes. Nothing is written when the comparison fails."""
+    graph, _ = update(args.repo, args.out)
+    try:
+        d = diff(args.repo, graph, args.base, args.out)
+    except DiffError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    save(args.repo, graph, args.out)
+    for path in outputs.export(args.repo, graph, _view_semantic(args, graph), args.out, diff=d):
+        print(path)
+    print("\n".join([format_diff(d, graph), *legend.diff_key()]))
     return 0
 
 
@@ -270,6 +287,13 @@ def build_parser() -> argparse.ArgumentParser:
                            help="print a Markdown block for CLAUDE.md / AGENTS.md: how far an "
                                 "agent can trust the graph and how to query it (writes nothing)")
     rules.set_defaults(func=cmd_rules)
+
+    dif = sub.add_parser("diff", parents=[repo],
+                         help="what changed since a commit (staged, unstaged, untracked): files, "
+                              "functions and links; writes the outputs with graph.html's Diff layer")
+    dif.add_argument("--base", default="HEAD", metavar="REF",
+                     help="commit, branch or tag to compare with (default: HEAD)")
+    dif.set_defaults(func=cmd_diff)
 
     enr = sub.add_parser("enrich", parents=[repo],
                          help="one LLM pass via Ollama -> semantic.json, then refresh graph.html")

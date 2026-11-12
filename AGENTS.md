@@ -20,6 +20,7 @@ reaper/discover.py      list files (`git ls-files -co --exclude-standard`, else 
 reaper/extract_py.py    Python extraction (ast)
 reaper/extract_js.py    JavaScript/TypeScript extraction (tree-sitter)
 reaper/resolve.py       raw refs -> edges
+reaper/diff.py          `reaper diff`: working tree vs a commit (files, symbols, links); graph.html's Diff layer
 reaper/graph.py         build/update/load/save graph.json; `out_dir()` decides where outputs go
 reaper/outputs.py       TREE.txt, SUMMARY.md, graph.html, query
 reaper/legend.py        what the labels mean; written into every output (keep it in step with resolve.py),
@@ -31,9 +32,10 @@ tests/fixtures/sample_py, sample_js   small known repos used by the tests
 
 ## Data contract
 Outputs live in `<repo>/.reaper/` or the `--out` dir.
-- graph.json (format version 2; another version means `update` does a full build):
+- graph.json (format version 3; another version means `update` does a full build):
   `meta {version, generated_at}`, `legend` (reaper/legend.py), `files {path: {lang, sha256, lines}}`,
-  `nodes [{id, kind, name, file, line, signature, doc}]` (kind file|class|function|method|external),
+  `nodes [{id, kind, name, file, line, signature, doc}]` (kind file|class|function|method|external;
+  class/function/method nodes also have `end_line`),
   `refs [{src, kind, target, alias, file, line}]` (raw, per file; kind import|call|inherit),
   `edges [{src, dst, kind, confidence, lines}]` (kind contains|imports|calls|inherits; `lines` =
   source lines in src's file that made the edge, absent on contains). A (src, dst, kind) pair has
@@ -69,6 +71,10 @@ Outputs live in `<repo>/.reaper/` or the `--out` dir.
   - Data text reaches the DOM only via textContent. The template is filled in one pass, and `<` is
     escaped in the embedded JSON.
   - Above 1,500 nodes or 5,000 edges the page opens at file level.
+  - The page opens in Tree (the Graph network lays itself out hidden first, see openTree()).
+  - Diff layer (only from `reaper diff`): the page data's `diff` block (outputs._diff_view) gives
+    statuses by node id and page edge id; deleted nodes and removed edges join the data as
+    diffOnly and are drawn only while Diff is on. graph.json is never changed by it.
   - vis-network 9.1.9 from unpkg, jsDelivr as fallback. No other JS library or CDN.
 
 ## Working rules

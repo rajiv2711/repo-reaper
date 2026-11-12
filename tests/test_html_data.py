@@ -116,10 +116,11 @@ def test_html_edge_ids(sample_repo):
 def test_html_top_level(sample_repo):
     g = build(sample_repo)
     data = html_data(outputs.graph_html(g))
-    assert set(data) == {"nodes", "edges", "note", "lod", "budget", "meta", "file_edges", "sem"}
+    assert set(data) == {"nodes", "edges", "note", "lod", "budget", "meta", "file_edges", "sem",
+                         "diff"}
     assert data["meta"] == {"generated_at": g["meta"]["generated_at"], "files": 6, "nodes": 25,
                             "edges": 39}
-    assert data["sem"] is None
+    assert data["sem"] is None and data["diff"] is None  # diff: only from `reaper diff`
     assert outputs.graph_html(g) == outputs.graph_html(g, None)
 
 
