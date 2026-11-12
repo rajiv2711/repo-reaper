@@ -181,6 +181,18 @@ INFERRED in a package folder.
 Open the file in a browser; no server is needed. The page loads vis-network 9.1.9 from unpkg
 (jsDelivr as fallback), so it needs internet access. If both fail, the page says so.
 
+![Graph mode: repo-reaper's own graph (641 nodes, 1,735 edges) with filters, legend counts and the most-connected list](docs/images/graph-mode.png)
+
+*Graph mode on repo-reaper itself: files (blue bars), functions and methods (dots), calls (orange)
+and imports (blue). The legend counts what is shown; the right panel starts from the
+most-connected nodes.*
+
+![Tree mode: the reaper/ folder open, graph.py open to its functions, other files closed with their symbol counts](docs/images/tree-mode.png)
+
+*Tree mode: laid out like an editor's project tree. Here the `reaper/` folder is open, `graph.py`
+is open to its functions, and the other files are closed (the number is how many symbols they
+hold). Calls and imports are drawn as curves over the tree.*
+
 - **Views.** Graph is a force layout; Re-layout and Fit are in the toolbar. Tree lays the repo out
   left to right like an editor's project tree: folders, then files, then classes and functions,
   then methods. Imports, calls and inheritance are drawn as curves over it. In Tree,
