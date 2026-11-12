@@ -183,6 +183,9 @@ const ROW = 40;
 // Tree mode's page-only folder nodes (never in graph.json) have ids "dir:<path>/"; real ids never
 // start with "dir:".
 const DIR_PREFIX = "dir:";
+// Tree mode's first build closes the folders below the deepest depth whose tree has at most this
+// many rows (autoClosed), so a big repo opens as its folder structure; a small one opens in full.
+const TREE_ROWS = 60;  // externals are not counted
 // Tree mode edge curves: contains links (and the folder branches) are the tree's branches, thin and
 // grey without arrows; imports, calls and inherits (and file-level bundles) bend over the tree.
 const BRANCH_SMOOTH = {enabled: true, type: "cubicBezier", forceDirection: "horizontal"};
@@ -281,6 +284,12 @@ for (const n of D.nodes) {
 for (const e of D.edges) {
   if (e.kind === "contains") parentOf.set(e.to, e.from);
 }
+// folder id -> number of graph files below it (the "(N)" of a closed folder's label).
+const FILES_IN = new Map();
+for (const n of D.nodes) {
+  if (n.kind !== "file") continue;
+  for (let p = parentOf.get(n.id); p !== undefined; p = parentOf.get(p)) FILES_IN.set(p, (FILES_IN.get(p) || 0) + 1);
+}
 // Tree mode's page-only branch edges folder -> subfolder / file; drawn while treeLayout lists them.
 const BRANCH_EDGES = [...parentOf].filter(([, p]) => DIRS.has(p))
   .map(([child, p]) => ({id: "b:" + child, from: p, to: child, kind: "contains", ...branchLook()}));
@@ -301,7 +310,8 @@ const searchKeys = D.nodes.map(n => ({id: n.id, deg: n.deg || 0, name: String(n.
                                       sig: String(n.signature || "").toLowerCase()}));
 
 const state = {kinds: new Set(NODE_KINDS), ekinds: new Set(EDGE_KINDS), conf: new Set(CONFS),
-               hops: 1, center: null, focus: null, selected: null, expanded: new Set()};
+               hops: 1, center: null, focus: null, selected: null, expanded: new Set(),
+               closed: new Set()};  // closed: Tree mode folders / files shown as one row (Graph ignores it)
 
 // Assigned in start() (vis loaded). shown = the visible sets V of the last refresh();
 // placed = state.expanded at the last refresh (files whose symbols already have a ring).
@@ -431,7 +441,7 @@ function byTree(ids) {
 // one block after a blank row. branches = page-only folder -> subfolder / file edges
 // ("b:<child id>"), only while "contains" is enabled. Returns {pos: {id: {x, y}}, dirs, branches}.
 function treeLayout(V) {
-  const kids = new Map(), roots = [], ext = [], dirs = new Set(), branches = new Set();
+  const kids = new Map(), roots = [], ext = [], dirs = new Set(), branches = new Set(), hung = new Set();
   const hang = id => {
     let p = parentOf.get(id);
     while (p !== undefined && !V.nodes.has(p) && !DIRS.has(p)) p = parentOf.get(p);
@@ -449,8 +459,15 @@ function treeLayout(V) {
     }
   };
   for (const id of V.nodes) {
-    if (byId.get(id).kind === "external") ext.push(id);
-    else hang(id);
+    if (byId.get(id).kind === "external") {
+      ext.push(id);
+      continue;
+    }
+    const at = standIn(id);  // a node inside a closed folder or file: that one is a leaf row
+    if (hung.has(at)) continue;
+    hung.add(at);
+    if (DIRS.has(at)) dirs.add(at);
+    hang(at);
   }
   const pos = {};
   let row = 0;
@@ -468,6 +485,104 @@ function treeLayout(V) {
   return {pos, dirs, branches};
 }
 
+// The node Tree mode draws for id: its outermost closed folder or file, else id itself.
+function standIn(id) {
+  let at = id;
+  for (let p = parentOf.get(id); p !== undefined; p = parentOf.get(p)) if (state.closed.has(p)) at = p;
+  return at;
+}
+
+// What Tree mode draws of the visible sets V (pure): nodes inside a closed folder or file are not
+// drawn (closed = the closed ones drawn for them). An edge or file-level bundle whose ends both fall
+// in one closed folder or file is hidden; one with a closed one at either end joins the folder bundle
+// "d:<from> -> <to>" ({id, from, to, counts: {kind: {confidence: n}}}, like a file-level bundle).
+// at = standIn, so fitIds() can fit a hidden node as its folder or file.
+function treeView(V) {
+  const T = {nodes: new Set(), raw: new Set(), agg: new Set(), folds: new Map(), closed: new Set(), at: standIn};
+  for (const id of V.nodes) {
+    const at = standIn(id);
+    if (at === id) T.nodes.add(id);
+    else T.closed.add(at);
+  }
+  const fold = (from, to, kind, conf, n) => {
+    const id = "d:" + from + " -> " + to;
+    if (!T.folds.has(id)) T.folds.set(id, {id, from, to, counts: {}});
+    const counts = T.folds.get(id).counts;
+    counts[kind] = counts[kind] || {};
+    counts[kind][conf] = (counts[kind][conf] || 0) + n;
+  };
+  const route = (from, to, keep, add) => {
+    const a = standIn(from), b = standIn(to);
+    if (a === from && b === to) keep();
+    else if (a !== b) add(a, b);
+  };
+  for (const id of V.raw) {
+    const e = edgeById.get(id);
+    route(e.from, e.to, () => T.raw.add(id), (a, b) => fold(a, b, e.kind, e.confidence, 1));
+  }
+  for (const id of V.agg) {
+    const f = bundleById.get(id);
+    route(f.from, f.to, () => T.agg.add(id), (a, b) => {
+      for (const kind of Object.keys(f.counts)) {
+        for (const conf of Object.keys(f.counts[kind])) fold(a, b, kind, conf, f.counts[kind][conf]);
+      }
+    });
+  }
+  return T;
+}
+
+// The folders and files Tree mode closes when it is first built (pure; state.closed is left as it
+// was): every closable one at tree depth >= d for the largest d whose tree of V has at most `budget`
+// rows, externals not counted (top-level folders and files have depth 0; when nothing fits, all
+// are closed).
+function autoClosed(V, budget = TREE_ROWS) {
+  const depth = id => id.split("/").length - (DIRS.has(id) ? 2 : 1);  // "dir:a/b/" -> 1, "a/b.py" -> 1
+  const all = [...DIRS.keys()].concat(D.nodes.filter(n => closable(n.id)).map(n => n.id));
+  const rows = pos => Object.keys(pos).filter(id => DIRS.has(id) || byId.get(id).kind !== "external").length;
+  const keep = state.closed;
+  let closed = new Set(all);
+  for (let open = Math.max(0, ...all.map(depth)) + 1; open > 0; open--) {
+    state.closed = new Set(all.filter(id => depth(id) >= open));
+    if (rows(treeLayout(V).pos) <= budget) {
+      closed = state.closed;
+      break;
+    }
+  }
+  state.closed = keep;
+  return closed;
+}
+
+// What Tree mode can close: folders, and files with symbols outside the file-level view (there a
+// file's double-click expands it instead).
+function closable(id) {
+  return DIRS.has(id) || (!D.lod && symbolsOf.has(id));
+}
+
+// Double-click on a folder or file in Tree mode: close it or open it again (the focus is kept).
+// Anything else is left untouched (returns null).
+function toggleClosed(id) {
+  if (!closable(id)) return null;
+  if (state.closed.delete(id)) return "opened";
+  state.closed.add(id);
+  return "closed";
+}
+
+// Open the closed folders and file on the way to id, so Tree mode draws it in its own row.
+function reveal(id) {
+  for (let p = parentOf.get(id); p !== undefined; p = parentOf.get(p)) state.closed.delete(p);
+}
+
+// Tree label and tooltip of a closable folder or file: open = as built; closed = "name/ (files
+// below it)" for a folder, "name (its symbols)" for a file.
+function closedLook(id) {
+  const d = DIRS.get(id), n = byId.get(id);
+  if (!state.closed.has(id)) return d ? {label: d.label, title: d.title} : {label: treeLabel(n), title: n.title};
+  const k = d ? FILES_IN.get(id) || 0 : symbolsOf.get(id).length;
+  const what = d ? (k === 1 ? " file" : " files") : (k === 1 ? " symbol" : " symbols");
+  return {label: (d ? d.label + "/" : treeLabel(n)) + " (" + k + ")",
+          title: (d ? d.title : id) + " - " + k + what + ", double-click to open"};
+}
+
 // Look of a file-level bundle from its enabled edges (follows the filters like the legend):
 // width encodes the count (1 + log2, capped at 8), dashes and opacity follow its best
 // confidence, colour = the edge-kind colour when it carries one kind, else grey.
@@ -481,9 +596,14 @@ function bundleStyle(f) {
     dashes: best === "INFERRED" || best === "AMBIGUOUS" ? DASH[best] : false,
     color: best === "AMBIGUOUS" ? {color: base, opacity: 0.5} : base,
     width: total > 0 ? Math.min(8, 1 + Math.log2(total)) : 1,
-    title: f.from + " -> " + f.to + ": " + total + (total === 1 ? " edge" : " edges") +
+    title: pathOf(f.from) + " -> " + pathOf(f.to) + ": " + total + (total === 1 ? " edge" : " edges") +
            (detail ? " (" + detail + ")" : "")
   };
+}
+
+// An id as people read it: a page-only folder by its path ("dir:app/" -> "app/"), else the id.
+function pathOf(id) {
+  return DIRS.has(id) ? DIRS.get(id).title : id;
 }
 
 function zeros(keys) {
@@ -492,18 +612,20 @@ function zeros(keys) {
   return o;
 }
 
-// Legend counts of what is shown; a bundle adds its enabled edges, lines = drawn edges.
+// Legend counts of what is shown; a bundle (file-level, or Tree mode's folder bundles V.folds)
+// adds its enabled edges, lines = drawn edges.
 function legendCounts(V) {
+  const folds = V.folds ? [...V.folds.values()] : [];
   const c = {node: zeros(NODE_KINDS), edge: zeros(EDGE_KINDS), conf: zeros(CONFS),
-             lines: V.raw.size + V.agg.size};
+             lines: V.raw.size + V.agg.size + folds.length};
   for (const id of V.nodes) c.node[byId.get(id).kind] += 1;
   for (const id of V.raw) {
     const e = edgeById.get(id);
     c.edge[e.kind] += 1;
     c.conf[e.confidence] += 1;
   }
-  for (const id of V.agg) {
-    for (const [kind, , confs] of bundleParts(bundleById.get(id)).parts) {
+  for (const f of [...V.agg].map(id => bundleById.get(id)).concat(folds)) {
+    for (const [kind, , confs] of bundleParts(f).parts) {
       for (const [conf, k] of confs) {
         c.edge[kind] += k;
         c.conf[conf] += k;
@@ -550,6 +672,7 @@ function refocus() {
 
 function focusOn(id) {
   state.selected = state.center = id;
+  reveal(id);
   refocus();
 }
 
@@ -643,9 +766,11 @@ function nodeColor(n, on) {
 }
 
 // The ids a fit may use: only loaded ones (vis throws on ids that are not in the view), as an array.
+// Tree mode's sets (treeView) fit a node inside a closed folder as that folder.
 function fitIds(V) {
-  if (state.focus) return [...state.focus].filter(id => V.nodes.has(id));
-  return V.nodes.has(state.selected) ? [state.selected] : [];
+  const at = V.at || (id => id);
+  const ids = (state.focus ? [...state.focus] : [state.selected]).map(at);
+  return [...new Set(ids)].filter(id => V.nodes.has(id) || (V.closed !== undefined && V.closed.has(id)));
 }
 
 // Deep link "#node=<id>&hops=N": the id is percent-encoded (ids hold "/", ":" and ".").
@@ -875,8 +1000,9 @@ function renderLegend(V) {
       if (span) span.textContent = String(n);
     });
   const shownEdges = CONFS.reduce((sum, k) => sum + c.conf[k], 0);
+  const closed = V.closed ? V.closed.size : 0;  // Tree mode: closed folders / files drawn
   setStatus(V.nodes.size + " nodes, " + shownEdges + " edges shown (" + c.lines + " lines)" +
-            (D.note ? " - " + D.note : ""));
+            (closed ? ", " + closed + " closed (double-click to open)" : "") + (D.note ? " - " + D.note : ""));
 }
 
 // Re-apply state to the network: ring-place the symbols of newly expanded files, remember
@@ -1076,15 +1202,23 @@ function setMode(m) {
   }
 }
 
-// Tree mode's own DataSets, views and network (physics off, positions from treeLayout).
+// Tree mode's own DataSets, views and network (physics off, positions from treeLayout). The
+// folders autoClosed() picks for the whole tree (not the focus) start closed; a selection made in
+// Graph is revealed.
 function startTree() {
   tnodes = new vis.DataSet(treeNodeItems());
   tedges = new vis.DataSet(treeEdgeItems());
-  tshown = applyView();
-  placeTree(tshown);
-  tnodeView = new vis.DataView(tnodes, {filter: n => tshown.nodes.has(n.id) || tree.dirs.has(n.id)});
+  const focus = state.focus;
+  state.focus = null;
+  state.closed = autoClosed(applyView());
+  state.focus = focus;
+  if (state.selected) reveal(state.selected);
+  const V = applyView();
+  placeTree(V);
+  tshown = treeView(V);
+  tnodeView = new vis.DataView(tnodes, {filter: n => Object.hasOwn(tree.pos, n.id)});
   tedgeView = new vis.DataView(tedges, {filter: e => tshown.raw.has(e.id) || tshown.agg.has(e.id) ||
-                                                     tree.branches.has(e.id)});
+                                                     tshown.folds.has(e.id) || tree.branches.has(e.id)});
   tnet = new vis.Network(document.getElementById("tree"), {nodes: tnodeView, edges: tedgeView}, {
     layout: {improvedLayout: false},
     physics: {enabled: false},
@@ -1093,26 +1227,33 @@ function startTree() {
     groups: treeGroups(),
     interaction: {hover: true, tooltipDelay: 150, hideEdgesOnDrag: D.lod, hideEdgesOnZoom: D.lod}
   });
-  tnet.on("doubleClick", p => { if (p.nodes.length && toggleExpand(p.nodes[0]) !== null) refresh(); });
+  tnet.on("doubleClick", p => {
+    if (p.nodes.length && (toggleClosed(p.nodes[0]) !== null || toggleExpand(p.nodes[0]) !== null)) refresh();
+  });
   tnet.on("click", p => { if (p.nodes.length) pick(p.nodes[0], false); });
 }
 
-// Put the shown nodes and their folders at their tree places (before the views let them in).
+// Put the shown nodes and their folders at their tree places (before the views let them in);
+// closable folders and files get their open / closed label.
 function placeTree(V) {
   tree = treeLayout(V);
-  tnodes.update(Object.entries(tree.pos).map(([id, p]) => ({id, x: p.x, y: p.y, ...llmColour(id)})));
+  tnodes.update(Object.entries(tree.pos).map(([id, p]) =>
+    ({id, x: p.x, y: p.y, ...llmColour(id), ...(closable(id) ? closedLook(id) : {})})));
 }
 
-// refresh() in Tree mode: visible sets -> tree positions -> Tree views, legend and status.
+// refresh() in Tree mode: visible sets -> tree positions -> drawn sets (closed folders folded,
+// folder bundles added or restyled; old ones stay in the DataSet, hidden by the view) -> Tree
+// views, legend and status. Returns the drawn sets.
 function refreshTree() {
   const V = applyView();
-  tshown = V;
   placeTree(V);
+  tshown = treeView(V);
   if (D.lod) tedges.update(D.file_edges.map(f => ({id: f.id, ...bundleStyle(f)})));
+  if (tshown.folds.size) tedges.update([...tshown.folds.values()].map(bundleEdge));
   tnodeView.refresh();
   tedgeView.refresh();
-  renderLegend(V);
-  return V;
+  renderLegend(tshown);
+  return tshown;
 }
 
 // vis from unpkg (static tag above); if it did not load, try jsDelivr once, then say so.
