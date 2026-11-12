@@ -193,3 +193,48 @@ def test_js_prototype_methods_and_bare_names(tmp_path):
         ("src/use.js::f", "src/list.js::List.total", "calls", I),
         ("src/use.js::f", "src/helper.js::helper", "calls", I),
     }
+
+
+# One pair, call sites of different confidence: one edge per confidence, each with its own lines.
+SPLIT = {
+    "lib/foo.py": (
+        "class Foo:\n"
+        "    def m(self):\n"
+        "        pass\n"),
+    "app/main.py": (
+        "from lib.foo import Foo\n"      # 1
+        "\n"                             # 2
+        "def go(x):\n"                   # 3
+        "    Foo.m(x)\n"                 # 4: through the imported class: EXTRACTED
+        "    x.m()\n"                    # 5: x unknown, Foo the only visible class with m: INFERRED
+        "    x.m()\n"                    # 6: INFERRED
+        "    Foo.m(x.m())\n"),           # 7: both on one line: the line is EXTRACTED only
+    "pkg/__init__.py": "",
+    "pkg/neighbour.py": "def ping():\n    pass\n",
+    "pkg/tool.py": (
+        "from neighbour import ping\n"   # 1: the package folder's neighbour: INFERRED
+        "import pkg.neighbour\n"),       # 2: absolute: EXTRACTED
+}
+
+
+def test_a_pair_has_one_edge_per_confidence_each_with_its_own_lines(tmp_path):
+    g = mini_repo(tmp_path, SPLIT)
+    assert [e for e in g["edges"] if e["kind"] != "contains"] == [
+        {"src": "app/main.py", "dst": "lib/foo.py", "kind": "imports", "confidence": E, "lines": [1]},
+        {"src": "pkg/tool.py", "dst": "pkg/neighbour.py", "kind": "imports", "confidence": E,
+         "lines": [2]},
+        {"src": "pkg/tool.py", "dst": "pkg/neighbour.py", "kind": "imports", "confidence": I,
+         "lines": [1]},
+        {"src": "app/main.py::go", "dst": "lib/foo.py::Foo.m", "kind": "calls", "confidence": E,
+         "lines": [4, 7]},
+        {"src": "app/main.py::go", "dst": "lib/foo.py::Foo.m", "kind": "calls", "confidence": I,
+         "lines": [5, 6]},
+    ]
+    # contains edges: one per pair, no lines, as before
+    assert [e for e in g["edges"] if e["kind"] == "contains"] == [
+        {"src": "app/main.py", "dst": "app/main.py::go", "kind": "contains", "confidence": E},
+        {"src": "lib/foo.py", "dst": "lib/foo.py::Foo", "kind": "contains", "confidence": E},
+        {"src": "lib/foo.py::Foo", "dst": "lib/foo.py::Foo.m", "kind": "contains", "confidence": E},
+        {"src": "pkg/neighbour.py", "dst": "pkg/neighbour.py::ping", "kind": "contains",
+         "confidence": E},
+    ]

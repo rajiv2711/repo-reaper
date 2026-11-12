@@ -77,6 +77,7 @@ The argument `<repo>` is the root of the repository to map. Every command except
 | `reaper export <repo>` | Writes TREE.txt, SUMMARY.md and graph.html from graph.json. |
 | `reaper query <repo> callers\|callees\|subclasses\|deps NAME` | Answers one question in one call (see [query](#query)). NAME can be a node id, a qualified name (`UserService.create`), a module name (`app.service`) or a plain name. |
 | `reaper enrich <repo> --pass files\|groups\|architecture` | Runs one LLM pass, then rewrites graph.html so the page shows the new results. |
+| `reaper rules <repo>` | Prints a Markdown block to paste into CLAUDE.md or AGENTS.md: what the graph is, how far an agent can trust it, and how to query it (see [rules](#rules)). Writes nothing. |
 
 Options:
 - `run --llm` and `enrich` both take:
@@ -127,6 +128,17 @@ callers of physicsnemo/utils/checkpoint.py::_get_checkpoint_filename  (line 570)
   not linked: none
 ```
 
+### rules
+
+An agent given the graph alone re-checks every answer with grep and saves nothing; in a study on
+physicsnemo, agents whose instructions held an explicit trust rule used 22% fewer input tokens and
+36% fewer turns, with the same accuracy. `reaper rules <repo>` prints that rule, with the exact
+`query` command for this repo, as a block for the agent's instructions:
+
+```
+reaper rules ~/code/myapp >> ~/code/myapp/CLAUDE.md
+```
+
 ## Outputs
 
 All outputs go to `<repo>/.reaper/`, or to the `--out` directory. Each one explains its own labels
@@ -149,7 +161,8 @@ Each node is `{id, kind, name, file, line, signature, doc}` with kind `file`, `c
 it (`app/service.py::UserService.create`), or `ext:<package>` for something outside the repo.
 Each edge is `{src, dst, kind, confidence, lines}` with kind `contains`, `imports`, `calls` or
 `inherits`; `lines` are the lines in src's file the edge comes from (call sites, the import, the
-class line) and are absent on `contains` edges.
+class line) and are absent on `contains` edges. When some call sites of a pair are proven and
+others guessed, the pair has one edge per confidence, each with only its own lines.
 
 ### How a call becomes an edge
 

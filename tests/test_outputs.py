@@ -7,9 +7,10 @@ and the hand-checked edge list in test_resolve.py (FIXTURE_EDGES).
 import json
 import re
 
-from reaper import outputs
+from reaper import enrich, outputs
 from reaper.cli import main
 from reaper.graph import build, graph_path
+from test_resolve_rules import SPLIT
 
 M, R, S, U = "app/models.py", "app/repository.py", "app/service.py", "app/utils.py"
 
@@ -161,6 +162,29 @@ def test_summary_big_cycle_group_is_capped(tmp_path):
     md = outputs.summary_md(build(write(tmp_path, files)))
     assert ("- f0.py -> f1.py -> f0.py (group of 8 files: "
             "f0.py, f1.py, f2.py, f3.py, f4.py, ... (+3 more))") in md
+
+
+def test_split_pair_is_one_link_but_two_drawn_edges(tmp_path):
+    """A pair whose lines differ in confidence has one edge per confidence (SPLIT). Degrees and
+    the LLM's file groups count a link (src, dst, kind) once; SUMMARY's stats and graph.html's
+    file-level bundles count edges, as graph.json and the page hold them."""
+    g = build(write(tmp_path, SPLIT))
+    deg = outputs.degrees(g)
+    assert {i: deg[i] for i in ("app/main.py", "lib/foo.py", "app/main.py::go", "lib/foo.py::Foo.m",
+                                "pkg/tool.py", "pkg/neighbour.py")} == {
+        "app/main.py": (0, 1), "lib/foo.py": (1, 0), "app/main.py::go": (0, 1),
+        "lib/foo.py::Foo.m": (1, 0), "pkg/tool.py": (0, 1), "pkg/neighbour.py": (1, 0)}
+    md = outputs.summary_md(g)
+    assert "| `app/main.py::go` | function | 0 | 1 | 1 |" in md
+    assert "| edges | 9 |" in md and "| EXTRACTED | 7 |" in md and "| INFERRED | 2 |" in md
+    assert enrich._file_links(g) == {("app/main.py", "lib/foo.py"): 2,
+                                     ("pkg/neighbour.py", "pkg/tool.py"): 1}
+    assert outputs.file_edges(g) == [
+        {"id": "f0", "from": "app/main.py", "to": "lib/foo.py", "count": 3,
+         "counts": {"calls": {"EXTRACTED": 1, "INFERRED": 1}, "imports": {"EXTRACTED": 1}}},
+        {"id": "f1", "from": "pkg/tool.py", "to": "pkg/neighbour.py", "count": 2,
+         "counts": {"imports": {"EXTRACTED": 1, "INFERRED": 1}}},
+    ]
 
 
 # ---------------------------------------------------------------- graph.html

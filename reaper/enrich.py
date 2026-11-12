@@ -229,12 +229,11 @@ GROUPS_SCHEMA = {"type": "object",
 
 
 def _file_links(graph: dict) -> Counter:
-    """(file a, file b) with a < b -> number of imports/inherits/calls edges between them."""
+    """(file a, file b) with a < b -> number of imports/inherits/calls links between them
+    (outputs.links: a pair with edges of two confidences counts once)."""
     file_of = {n["id"]: n["file"] for n in graph["nodes"] if n["kind"] != "external"}
     links = Counter()
-    for e in graph["edges"]:
-        if e["kind"] == "contains":
-            continue
+    for e in outputs.links(graph):
         a, b = file_of.get(e["src"]), file_of.get(e["dst"])
         if a and b and a != b:
             links[(min(a, b), max(a, b))] += 1
@@ -429,9 +428,9 @@ def _arch_parts(graph: dict, sem: dict) -> tuple[list, list[str], list[str]]:
     group_of = {p: gid for gid, members, *_ in plan for p in members}
     file_of = {n["id"]: n["file"] for n in graph["nodes"] if n["kind"] != "external"}
     cross = defaultdict(Counter)
-    for e in graph["edges"]:
+    for e in outputs.links(graph):
         a, b = file_of.get(e["src"]), file_of.get(e["dst"])
-        if e["kind"] != "contains" and a and b and group_of[a] != group_of[b]:
+        if a and b and group_of[a] != group_of[b]:
             cross[(group_of[a], group_of[b])][e["kind"]] += 1
     pairs = sorted(cross.items(), key=lambda kv: (-sum(kv[1].values()), order[kv[0][0]],
                                                   order[kv[0][1]]))

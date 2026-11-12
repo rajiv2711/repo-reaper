@@ -156,3 +156,117 @@ def test_footer_says_when_the_name_is_a_builtin_method(tmp_path, capsys):
         "    lib/use.py:2  items.append()  in lib/use.py::f\n"
         + KEY + COMPLETE
     )
+
+
+# A pair with proven and guessed call sites has one edge per confidence (test_resolve_rules.SPLIT):
+# query lists one line per edge, counts and expands each node once.
+FOO = (
+    "class Foo:\n"            # 1
+    "    def m(self):\n"      # 2
+    "        helper()\n"      # 3
+    "\n"                      # 4
+    "def helper():\n"         # 5
+    "    pass\n"              # 6
+)
+MAIN = (
+    "from lib.foo import Foo, helper\n"   # 1
+    "\n"                                  # 2
+    "def go(x):\n"                        # 3
+    "    Foo.m(x)\n"                      # 4: through the imported class: EXTRACTED
+    "    x.m()\n"                         # 5: x unknown, Foo the only visible class with m: INFERRED
+    "    x.m()\n"                         # 6: INFERRED
+    "\n"                                  # 7
+    "def run(y):\n"                       # 8
+    "    go(y)\n"                         # 9
+    "    helper()\n"                      # 10
+    "    Foo.m(y.m())\n"                  # 11: both on one line: EXTRACTED only
+    "    y.m()\n"                         # 12: INFERRED
+)
+
+
+@pytest.fixture
+def split_repo(tmp_path):
+    from test_resolve_rules import SPLIT
+    files = {"lib/foo.py": FOO, "app/main.py": MAIN,
+             **{rel: src for rel, src in SPLIT.items() if rel.startswith("pkg/")}}
+    for rel, src in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(src)
+    assert main(["map", str(tmp_path)]) == 0
+    return tmp_path
+
+
+def test_one_line_per_confidence_and_each_node_counted_once(split_repo, capsys):
+    code, out = run(split_repo, capsys, "callees", "go")
+    assert out == (
+        "callees of app/main.py::go  (line 3)\n"
+        "  1 callee: 1 EXTRACTED\n"                       # a node counts once, at its strongest
+        "  EXTRACTED  lib/foo.py::Foo.m  (called at line 4)\n"
+        "  INFERRED   lib/foo.py::Foo.m  (called at line 5, 6)\n"
+        + KEY
+    )
+    code, out = run(split_repo, capsys, "callees", "run", "--depth", "2")
+    assert out == (
+        "callees of app/main.py::run  (line 8)\n"
+        "  3 callees: 3 EXTRACTED; hop 2: no new ones\n"
+        "  EXTRACTED  app/main.py::go  (called at line 9)\n"
+        "    EXTRACTED  lib/foo.py::Foo.m  (called at line 4)  (see above)\n"
+        "    INFERRED   lib/foo.py::Foo.m  (called at line 5, 6)  (see above)\n"
+        "  EXTRACTED  lib/foo.py::Foo.m  (called at line 11)\n"
+        "    EXTRACTED  lib/foo.py::helper  (called at line 3)  (see above)\n"
+        "  INFERRED   lib/foo.py::Foo.m  (called at line 12)\n"   # expanded once, above
+        "  EXTRACTED  lib/foo.py::helper  (called at line 10)\n"
+        + KEY
+    )
+
+
+def test_callers_with_split_edges_text_and_json(split_repo, capsys):
+    code, out = run(split_repo, capsys, "callers", "Foo.m", "--depth", "2")
+    assert out == (
+        "callers of lib/foo.py::Foo.m  (line 2)\n"
+        "  2 callers: 2 EXTRACTED; hop 2: no new ones\n"
+        "  EXTRACTED  app/main.py::go  (calls at line 4)\n"
+        "    EXTRACTED  app/main.py::run  (calls at line 9)  (see above)\n"
+        "  INFERRED   app/main.py::go  (calls at line 5, 6)\n"
+        "  EXTRACTED  app/main.py::run  (calls at line 11)\n"
+        "  INFERRED   app/main.py::run  (calls at line 12)\n"
+        "  not linked: none\n"
+        + KEY + COMPLETE
+    )
+    code, out = run(split_repo, capsys, "callers", "Foo.m", "--depth", "2", "--json")
+    [res] = json.loads(out)
+    go = {"id": "app/main.py::go", "kind": "function", "file": "app/main.py", "line": 3}
+    run_ = {"id": "app/main.py::run", "kind": "function", "file": "app/main.py", "line": 8}
+    assert res["callers"] == [
+        {**go, "confidence": "EXTRACTED", "lines": [4],
+         "callers": [{**run_, "confidence": "EXTRACTED", "lines": [9], "repeat": True}]},
+        {**go, "confidence": "INFERRED", "lines": [5, 6]},        # listed; expanded under the first
+        {**run_, "confidence": "EXTRACTED", "lines": [11], "callers": []},
+        {**run_, "confidence": "INFERRED", "lines": [12]},
+    ]
+    assert res["unlinked"] == []
+
+
+def test_budget_counts_a_cut_node_once(split_repo, capsys):
+    # header 63 characters; --budget 28 leaves 112 - 63 = 49: room for the first row only (47 + 1)
+    code, out = run(split_repo, capsys, "callers", "Foo.m", "--budget", "28")
+    assert out == (
+        "callers of lib/foo.py::Foo.m  (line 2)\n"
+        "  2 callers: 2 EXTRACTED\n"
+        "  EXTRACTED  app/main.py::go  (calls at line 4)\n"
+        "  ... 1 more callers (app/ 1)\n"                 # run; go is listed already
+        "  (3 of 4 lines not shown; --budget 200 shows all)\n"
+        "  not linked: none\n"
+        + KEY + COMPLETE
+    )
+
+
+def test_deps_lists_a_file_once_with_all_its_import_lines(split_repo, capsys):
+    code, out = run(split_repo, capsys, "deps", "pkg/tool.py")
+    assert out == (
+        "deps of pkg/tool.py\n"
+        "  imports:\n"
+        "    pkg/neighbour.py  (line 1, 2)\n"             # an INFERRED and an EXTRACTED edge
+        "  imported by:\n"
+        "    (none)\n"
+    )

@@ -165,9 +165,9 @@ def test_last_name_matching(tmp_path):
             "        pass\n"
             "\n"
             "    def go(self, other):\n"
-            "        self.save()\n"         # own method: EXTRACTED
-            "        other.save()\n"        # A.save + B.save, both visible here: AMBIGUOUS each
-            "        save()\n"              # (A.save upgraded to EXTRACTED); bare name never means a method
+            "        self.save()\n"         # line 8: own method: EXTRACTED
+            "        other.save()\n"        # line 9: A.save + B.save, both visible here: AMBIGUOUS each
+            "        save()\n"              # (A.save keeps an AMBIGUOUS edge for line 9); bare name never means a method
             "        other.ping()\n"        # C0..C5.ping, but c.py is not imported here: no edge
             "        other.shout()\n"       # B.shout, the only visible shout: INFERRED
             "\n"
@@ -186,6 +186,9 @@ def test_last_name_matching(tmp_path):
     calls = {t for t in as_tuples(g["edges"]) if t[2] == "calls"}
     assert calls == {
         ("amb/a.py::A.go", "amb/a.py::A.save", "calls", E),
+        ("amb/a.py::A.go", "amb/a.py::A.save", "calls", A),
         ("amb/a.py::A.go", "amb/b.py::B.save", "calls", A),
         ("amb/a.py::A.go", "amb/b.py::B.shout", "calls", I),
     }
+    assert [(e["confidence"], e["lines"]) for e in g["edges"]
+            if (e["src"], e["dst"]) == ("amb/a.py::A.go", "amb/a.py::A.save")] == [(E, [8]), (A, [9])]

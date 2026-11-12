@@ -22,7 +22,8 @@ reaper/extract_js.py    JavaScript/TypeScript extraction (tree-sitter)
 reaper/resolve.py       raw refs -> edges
 reaper/graph.py         build/update/load/save graph.json; `out_dir()` decides where outputs go
 reaper/outputs.py       TREE.txt, SUMMARY.md, graph.html, query
-reaper/legend.py        what the labels mean; written into every output (keep it in step with resolve.py)
+reaper/legend.py        what the labels mean; written into every output (keep it in step with resolve.py),
+                        and the agent block `reaper rules` prints (trust rule + query line)
 reaper/templates/graph.html   the whole page (HTML, CSS, JS), package data
 reaper/llm.py           Ollama client (stdlib urllib)
 reaper/enrich.py        LLM passes: files, groups, architecture; semantic layer for graph.html
@@ -35,7 +36,8 @@ Outputs live in `<repo>/.reaper/` or the `--out` dir.
   `nodes [{id, kind, name, file, line, signature, doc}]` (kind file|class|function|method|external),
   `refs [{src, kind, target, alias, file, line}]` (raw, per file; kind import|call|inherit),
   `edges [{src, dst, kind, confidence, lines}]` (kind contains|imports|calls|inherits; `lines` =
-  source lines in src's file that made the edge, absent on contains).
+  source lines in src's file that made the edge, absent on contains). A (src, dst, kind) pair has
+  one edge per confidence among its lines, each line only on its strongest one.
 - Node ids: file = relative path `app/service.py`; symbol = `app/service.py::UserService.create`;
   external = `ext:requests`. Module name of a file: drop `.py`, `/` -> `.`, drop a trailing
   `.__init__`, drop a leading `src.`.

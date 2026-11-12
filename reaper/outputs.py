@@ -3,8 +3,9 @@
 All functions take a loaded graph dict and return text (or result dicts); export() writes the
 three files next to graph.json (<repo>/.reaper/ or the --out dir). Nothing here changes the graph.
 
-"Most-connected" degree counts imports, inherits and calls edges; contains edges (pure
-ownership) and external packages (listed separately) are left out.
+"Most-connected" degree counts imports, inherits and calls links (a pair with edges of two
+confidences is one link); contains edges (pure ownership) and external packages (listed
+separately) are left out.
 """
 
 from __future__ import annotations
@@ -21,7 +22,8 @@ import networkx as nx
 from reaper import legend
 from reaper.discover import count_by_language, language
 from reaper.graph import graph_path
-from reaper.resolve import BUILTINS as PY_BUILTINS, JS_GLOBALS, JS_PROTO_METHODS, PY_TYPE_METHODS
+from reaper.resolve import (BUILTINS as PY_BUILTINS, JS_GLOBALS, JS_PROTO_METHODS, PY_TYPE_METHODS,
+                            STRENGTH)
 
 NODE_KINDS = ("file", "class", "function", "method", "external")
 EDGE_KINDS = ("contains", "imports", "inherits", "calls")
@@ -116,13 +118,22 @@ def tree_text(graph: dict) -> str:
 
 # ---------------------------------------------------------------- SUMMARY.md
 
+def links(graph: dict):
+    """The imports/inherits/calls edges, one per (src, dst, kind). A pair whose lines differ in
+    confidence has one edge per confidence (resolve.py), but it is one link between two nodes."""
+    seen = set()
+    for e in graph["edges"]:
+        key = (e["src"], e["dst"], e["kind"])
+        if e["kind"] != "contains" and key not in seen:
+            seen.add(key)
+            yield e
+
+
 def degrees(graph: dict) -> dict[str, tuple[int, int]]:
-    """Node id -> (in, out) over imports/inherits/calls edges, externals left out."""
+    """Node id -> (in, out) over imports/inherits/calls links, externals left out."""
     kinds = {n["id"]: n["kind"] for n in graph["nodes"]}
     deg = defaultdict(lambda: [0, 0])
-    for e in graph["edges"]:
-        if e["kind"] == "contains":
-            continue
+    for e in links(graph):
         if kinds.get(e["src"]) not in (None, "external"):
             deg[e["src"]][1] += 1
         if kinds.get(e["dst"]) not in (None, "external"):
@@ -270,7 +281,8 @@ def file_edges(graph: dict) -> list[dict]:
 
     Each end maps to its node's file (externals map to themselves); same-file pairs are left
     out. Items {id: "f<i>", from, to, count, counts: {kind: {confidence: n}}}, sorted by
-    (from, to).
+    (from, to). Counts are edges as the page draws them (a pair with an EXTRACTED and an
+    INFERRED edge adds one to each), so they match the page's counts once a file is expanded.
     """
     file_of = {n["id"]: n.get("file") or n["id"] for n in graph["nodes"]}
     counts: dict[tuple[str, str], dict[str, Counter]] = defaultdict(lambda: defaultdict(Counter))
@@ -407,28 +419,41 @@ def _neighbours(graph: dict, mode: str) -> dict[str, list[tuple[str, str, list[i
         here, there = (e["src"], e["dst"]) if mode == "callees" else (e["dst"], e["src"])
         out[here].append((there, e["confidence"], e.get("lines", [])))
     for hits in out.values():
-        hits.sort()
+        hits.sort(key=lambda h: (h[0], -STRENGTH[h[1]]))  # a node's edges: strongest first
     return out
 
 
 def _tree(by_id: dict, near: dict, root: str, mode: str, depth: int) -> list[dict]:
     """Entries up to `depth` hops from root, breadth first. A node is expanded once, at its
-    shallowest hop; a later repeat is marked {"repeat": True} and has no children."""
-    top = [_entry(by_id, i, c, ln) for i, c, ln in near.get(root, [])]
-    level, seen = top, {root} | {e["id"] for e in top}
+    shallowest hop; a later repeat is marked {"repeat": True} and has no children. A node linked
+    to its parent by edges of two confidences has one entry per edge: the first (strongest) is
+    the one expanded, the others share its repeat mark."""
+
+    def entries(node_id: str, seen: set) -> tuple[list[dict], list[dict]]:
+        """(entries of node_id's neighbours, the new ones to expand at the next hop)."""
+        out, new, first = [], [], {}
+        for i, c, ln in near.get(node_id, []):
+            e = _entry(by_id, i, c, ln)
+            if i in first:
+                if first[i].get("repeat"):
+                    e["repeat"] = True
+            elif i in seen:
+                e["repeat"] = True
+            else:
+                new.append(e)
+            first.setdefault(i, e)
+            out.append(e)
+        seen.update(first)
+        return out, new
+
+    seen: set = set()
+    top, level = entries(root, seen)  # hop 1 has no repeats
+    seen.add(root)
     for _ in range(depth - 1):
         nxt = []
         for entry in level:
-            kids = []
-            for i, c, ln in near.get(entry["id"], []):
-                kid = _entry(by_id, i, c, ln)
-                if i in seen:
-                    kid["repeat"] = True
-                else:
-                    seen.add(i)
-                    nxt.append(kid)
-                kids.append(kid)
-            entry[mode] = kids
+            entry[mode], new = entries(entry["id"], seen)
+            nxt += new
         level = nxt
     return top
 
@@ -474,9 +499,10 @@ def query(graph: dict, mode: str, name: str, depth: int = 1) -> list[dict]:
     callers / callees / subclasses: [{node, line, <mode>: [entry]}], entry =
       {id, kind, file, line, confidence, lines}; `lines` are the call sites (callers: in the
       caller's file; callees: in the queried function's file), or the class line for subclasses.
-      With depth > 1 an entry has its own <mode> list; each node is expanded once (a repeat
-      gets "repeat": true). callers also has `unlinked`: call sites using the same name that
-      the graph linked to nothing of that name, [{src, file, line, target}].
+      A node reached by edges of two confidences has one entry per edge, strongest first.
+      With depth > 1 an entry has its own <mode> list; each node is expanded once, under its
+      first entry (a repeat gets "repeat": true). callers also has `unlinked`: call sites using
+      the same name that the graph linked to nothing of that name, [{src, file, line, target}].
     deps: [{node, imports: [...], imported_by: [...]}] for the file of each match
           (a symbol means its file; an external package has only imported_by); entries carry
           `lines`: where the import is, in the importing file.
@@ -501,12 +527,19 @@ def query(graph: dict, mode: str, name: str, depth: int = 1) -> list[dict]:
         for t in targets:
             results.append({
                 "node": t,
-                "imports": [_entry(by_id, e["dst"], lines=e.get("lines", []))
-                            for e in imports if e["src"] == t],
-                "imported_by": [_entry(by_id, e["src"], lines=e.get("lines", []))
-                                for e in imports if e["dst"] == t],
+                "imports": _merged(by_id, [(e["dst"], e) for e in imports if e["src"] == t]),
+                "imported_by": _merged(by_id, [(e["src"], e) for e in imports if e["dst"] == t]),
             })
     return results
+
+
+def _merged(by_id: dict, hits: list[tuple[str, dict]]) -> list[dict]:
+    """One deps entry per file, with the lines of all its import edges (deps shows no
+    confidence, so a pair's EXTRACTED and INFERRED edges are one entry)."""
+    lines: dict[str, set[int]] = {}
+    for node_id, e in hits:
+        lines.setdefault(node_id, set()).update(e.get("lines", []))
+    return [_entry(by_id, node_id, lines=sorted(ls)) for node_id, ls in lines.items()]
 
 
 _AT = {"callers": "calls at ", "callees": "called at ", "subclasses": ""}
@@ -533,14 +566,17 @@ def _rows(mode: str, entries: list[dict], depth: int = 1, parent: int = -1,
 
 def _budgeted(mode: str, rows: list[tuple[int, int, str, str]], room: int | None) -> list[str]:
     """Rows that fit in `room` characters, nearer hops first and shared round-robin between the
-    parents of a hop (a row is only shown with its parent). Under a parent whose children did not
-    all fit, and at the end for hop 1: '... N more <noun> (folder counts)'."""
+    parents of a hop (a row is only shown with its parent; the rows of one node, one per edge
+    confidence, take one turn). Under a parent whose children did not all fit, and at the end for
+    hop 1: '... N more <noun> (folder counts)', N = nodes with no row shown there."""
     keep = set(range(len(rows)))
     if room is not None:
-        rank, seen = [], Counter()
-        for _, parent, _, _ in rows:
-            rank.append(seen[parent])
-            seen[parent] += 1
+        rank, turn, seen = [], {}, Counter()
+        for _, parent, _, node_id in rows:
+            if (parent, node_id) not in turn:
+                turn[(parent, node_id)] = seen[parent]
+                seen[parent] += 1
+            rank.append(turn[(parent, node_id)])
         keep, used = set(), 0
         for i in sorted(range(len(rows)), key=lambda i: (rows[i][0], rank[i], i)):
             hop, parent, text, _ = rows[i]
@@ -548,9 +584,12 @@ def _budgeted(mode: str, rows: list[tuple[int, int, str, str]], room: int | None
                 continue
             keep.add(i)
             used += len(text) + 1
-    cut_under = defaultdict(list)
+    shown = {(rows[i][1], rows[i][3]) for i in keep}
+    cut_under, counted = defaultdict(list), set()
     for i, (hop, parent, _, node_id) in enumerate(rows):
-        if i not in keep and (parent in keep or parent < 0):
+        if i not in keep and (parent in keep or parent < 0) and (parent, node_id) not in shown \
+                and (parent, node_id) not in counted:
+            counted.add((parent, node_id))
             cut_under[parent].append(node_id)
     noun = _NOUNS[mode][1]
 
@@ -581,11 +620,16 @@ def _closing(rows: list, i: int, cut_under: dict) -> list[int]:
 
 
 def _count(mode: str, entries: list[dict]) -> list[str]:
-    """Per hop: '5 callers: 5 EXTRACTED', then 'hop 2: 130 callers: ...' (repeats not counted)."""
+    """Per hop: '5 callers: 5 EXTRACTED', then 'hop 2: 130 callers: ...' (repeats not counted).
+    A node counts once, under the strongest confidence of its edges."""
     out, level, hop = [], entries, 1
     while level:
-        unique = {e["id"]: e for e in level if not e.get("repeat")}
-        conf = Counter(e["confidence"] for e in unique.values())
+        unique = {}  # node id -> its strongest confidence
+        for e in level:
+            best = unique.get(e["id"])
+            if not e.get("repeat") and (best is None or STRENGTH[e["confidence"]] > STRENGTH[best]):
+                unique[e["id"]] = e["confidence"]
+        conf = Counter(unique.values())
         noun = _NOUNS[mode][len(unique) != 1]
         text = (f"{len(unique)} {noun}: " + ", ".join(f"{conf[c]} {c}" for c in CONFIDENCES if conf[c])
                 if unique else "no new ones")

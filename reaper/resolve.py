@@ -4,7 +4,9 @@ edge = {src, dst, kind, confidence, lines}; kind: contains | imports | inherits 
 confidence: EXTRACTED (proven by the code), INFERRED (single best guess),
             AMBIGUOUS (one edge per candidate when there are 2..MAX_CANDIDATES).
 lines: the source lines in src's file that made the edge (call sites, import and class lines);
-       contains edges have none.
+       contains edges have none. A pair (src, dst, kind) gets one edge per confidence among its
+       lines, strongest first, each with only its own lines; a line resolved twice (EXTRACTED and
+       INFERRED on one line) counts once, at its strongest.
 External nodes ("ext:<top package>") are rebuilt here as well, from imports that leave the repo,
 so resolve(resolve(nodes, refs)[0], refs) gives the same result.
 
@@ -98,10 +100,15 @@ def resolve(nodes: list[dict], refs: list[dict]) -> tuple[list[dict], list[dict]
     edges = []
     for key, c in sorted(r.edges.items(), key=lambda kv: (KIND_ORDER[kv[0][2]], kv[0][0], kv[0][1])):
         s, d, k = key
-        edge = {"src": s, "dst": d, "kind": k, "confidence": c}
-        if k != "contains":
-            edge["lines"] = sorted(r.lines[key])
-        edges.append(edge)
+        if k == "contains":
+            edges.append({"src": s, "dst": d, "kind": k, "confidence": c})
+            continue
+        by_conf = defaultdict(list)  # each line under its strongest confidence only
+        for line, lc in sorted(r.lines[key].items()):
+            by_conf[lc].append(line)
+        for lc in sorted(by_conf, key=lambda x: -STRENGTH[x]) or [c]:  # strongest first
+            edges.append({"src": s, "dst": d, "kind": k, "confidence": lc,
+                          "lines": by_conf.get(lc, [])})
     return nodes + ext, edges
 
 
@@ -116,8 +123,8 @@ class _Resolver:
         self.by_id = {n["id"]: n for n in nodes}
         self.nodes = nodes
         self.refs = refs
-        self.edges: dict[tuple[str, str, str], str] = {}
-        self.lines: dict[tuple[str, str, str], set[int]] = defaultdict(set)
+        self.edges: dict[tuple[str, str, str], str] = {}  # (src, dst, kind) -> strongest
+        self.lines: dict[tuple[str, str, str], dict[int, str]] = defaultdict(dict)  # line -> conf
         self.external: set[str] = set()
         self.file_ids = {n["id"] for n in nodes if n["kind"] == "file"}
         self.guessed: dict[str, set[str]] = defaultdict(set)  # file -> aliases from guessed imports
@@ -164,12 +171,16 @@ class _Resolver:
     # -- lookups ---------------------------------------------------------------
 
     def _add(self, src: str, dst: str, kind: str, confidence: str, line: int | None = None) -> None:
+        """Record a link; each line keeps the strongest confidence it was resolved with.
+        resolve() turns a pair into one edge per confidence among its lines."""
         key = (src, dst, kind)
         old = self.edges.get(key)
         if old is None or STRENGTH[confidence] > STRENGTH[old]:
             self.edges[key] = confidence
         if line is not None:
-            self.lines[key].add(line)
+            had = self.lines[key].get(line)
+            if had is None or STRENGTH[confidence] > STRENGTH[had]:
+                self.lines[key][line] = confidence
 
     def _kind(self, node_id: str) -> str | None:
         n = self.by_id.get(node_id)

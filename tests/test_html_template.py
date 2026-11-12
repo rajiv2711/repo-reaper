@@ -26,7 +26,8 @@ M, R, S, U = "app/models.py", "app/repository.py", "app/service.py", "app/utils.
 C = f"{S}::UserService.create"
 UNPKG = "https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
 JSDELIVR = "https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"
-# tests/test_resolve.py::test_last_name_matching, verbatim: 1 EXTRACTED, 1 AMBIGUOUS pair, 1 INFERRED call
+# tests/test_resolve.py::test_last_name_matching, verbatim: calls e20 A.go -> A.save EXTRACTED (line 8),
+# e21 A.go -> A.save AMBIGUOUS (line 9), e22 A.go -> B.save AMBIGUOUS, e23 A.go -> B.shout INFERRED
 AMB = {
     "amb/a.py": (
         "from amb.b import B\n"
@@ -205,7 +206,8 @@ def test_html_ambiguous_is_dashed(tmp_path):
     data = html_data(outputs.graph_html(build(write(tmp_path, AMB))))
     assert [(e["id"], e["confidence"], e["dashes"]) for e in data["edges"]
             if e["confidence"] != "EXTRACTED"] == [("e21", "AMBIGUOUS", True),
-                                                   ("e22", "INFERRED", True)]
+                                                   ("e22", "AMBIGUOUS", True),
+                                                   ("e23", "INFERRED", True)]
 
 
 def test_js_edge_styles_at_load(tmp_path):
@@ -213,7 +215,8 @@ def test_js_edge_styles_at_load(tmp_path):
     got = run_js(html, 'D.edges.filter(e => e.confidence !== "EXTRACTED")'
                        '.map(e => [e.id, e.dashes, e.color])')
     assert got == [["e21", [2, 4], {"color": "#f58518", "opacity": 0.5}],
-                   ["e22", [8, 6], "#f58518"]]
+                   ["e22", [2, 4], {"color": "#f58518", "opacity": 0.5}],
+                   ["e23", [8, 6], "#f58518"]]
 
 
 # ---------------------------------------------------------------- view, filters, legend, hop focus (08-04-2)
@@ -432,6 +435,21 @@ def test_js_relations(sample_repo):
     assert run_js(html, f'relations("{R}")["imported by"]') == [[S, "EXTRACTED"]]
     assert run_js(html, 'relations("app/models.py::User")["bases"]') == [
         ["app/models.py::Entity", "EXTRACTED"]]
+
+
+def test_js_split_pair_is_two_edges(tmp_path):
+    # test_resolve_rules.SPLIT: go -> Foo.m once proven, once guessed: two edges, two panel rows
+    from test_resolve_rules import SPLIT
+    for rel, src in SPLIT.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(src)
+    html = outputs.graph_html(build(tmp_path))
+    assert run_js(html, 'relations("lib/foo.py::Foo.m")["callers"]') == [
+        ["app/main.py::go", "EXTRACTED"], ["app/main.py::go", "INFERRED"]]
+    assert run_js(html, 'relations("pkg/tool.py")["imports"]') == [
+        ["pkg/neighbour.py", "EXTRACTED"], ["pkg/neighbour.py", "INFERRED"]]
+    assert run_js(html, "[D.edges.length, new Set(D.edges.map(e => e.id)).size, "
+                        "D.edges.filter(e => e.dashes).length]") == [9, 9, 2]
 
 
 def test_template_panel_strings():

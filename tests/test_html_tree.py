@@ -184,7 +184,8 @@ def test_js_tree_edge_styles(sample_repo, tmp_path, monkeypatch):
     amb = outputs.graph_html(build(write(tmp_path / "amb", AMB)))
     assert run_js(amb, 'treeEdgeItems().filter(e => e.confidence && e.confidence !== "EXTRACTED")'
                        '.map(e => [e.id, e.dashes, e.color])') == [
-        ["e21", [2, 4], {"color": "#f58518", "opacity": 0.5}], ["e22", [8, 6], "#f58518"]]
+        ["e21", [2, 4], {"color": "#f58518", "opacity": 0.5}],
+        ["e22", [2, 4], {"color": "#f58518", "opacity": 0.5}], ["e23", [8, 6], "#f58518"]]
     # file-level bundles bend like relations and keep their Phase 8 style
     lod = fixture_html(sample_repo, monkeypatch, 24)
     got = run_js(lod, 'treeEdgeItems().filter(e => e.id === "f3").map(e => [e.from, e.to, e.smooth, e.title])')

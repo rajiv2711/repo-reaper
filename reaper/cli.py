@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from reaper import __version__, enrich, llm, outputs
+from reaper import __version__, enrich, legend, llm, outputs
 from reaper.discover import count_by_language, discover
 from reaper.graph import build, graph_path, load, save, update
 
@@ -101,6 +101,15 @@ def cmd_query(args: argparse.Namespace) -> int:
         print(json.dumps(results, indent=1, ensure_ascii=False))
     else:
         print(outputs.format_query(args.mode, results, budget=args.budget), end="")
+    return 0
+
+
+def cmd_rules(args: argparse.Namespace) -> int:
+    """Print the agent block (reaper/legend.py); write nothing."""
+    print(legend.agent_rules(args.repo, args.out), end="")
+    path = graph_path(args.repo, args.out)
+    if not path.exists():
+        print(f"note: no {path} yet; run `reaper run {_where(args)}` first", file=sys.stderr)
     return 0
 
 
@@ -256,6 +265,11 @@ def build_parser() -> argparse.ArgumentParser:
                           f"per folder (default {outputs.DEFAULT_BUDGET}; --json is never cut)")
     qry.add_argument("--json", action="store_true", help="print results as JSON")
     qry.set_defaults(func=cmd_query)
+
+    rules = sub.add_parser("rules", parents=[repo],
+                           help="print a Markdown block for CLAUDE.md / AGENTS.md: how far an "
+                                "agent can trust the graph and how to query it (writes nothing)")
+    rules.set_defaults(func=cmd_rules)
 
     enr = sub.add_parser("enrich", parents=[repo],
                          help="one LLM pass via Ollama -> semantic.json, then refresh graph.html")

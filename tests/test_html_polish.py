@@ -143,7 +143,7 @@ def test_js_tree_edges_calm(sample_repo, tmp_path, monkeypatch):
     # Phase 8 dashes stay; AMBIGUOUS keeps its half (0.5 x 0.3)
     amb = outputs.graph_html(build(write(tmp_path / "amb", AMB)))
     got = run_modes(amb, 'graphLaidOut(); setMode("tree"); '
-                         'return ["e21", "e22"].map(id => [tedges.m.get(id).color, tedges.m.get(id).dashes, '
+                         'return ["e21", "e23"].map(id => [tedges.m.get(id).color, tedges.m.get(id).dashes, '
                          'tedges.m.get(id).width, STRONG.get(id)]);')
     assert got == [[{"color": "#f58518", "opacity": pytest.approx(0.15)}, [2, 4], 1, {"width": 1, "opacity": 0.5}],
                    [{"color": "#f58518", "opacity": 0.3}, [8, 6], 1, {"width": 1, "opacity": 1}]]

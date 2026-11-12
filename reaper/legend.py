@@ -1,11 +1,16 @@
 """What the labels in repo-reaper's outputs mean, written into every output file.
 
 One source for graph.json ("legend"), SUMMARY.md, TREE.txt, graph.html (a comment in <head>),
-semantic.json, ARCHITECTURE.md and the key under `reaper query` answers, so an agent or a person
-reading any one file learns how far to trust it. Keep it in step with resolve.py's rules.
+semantic.json, ARCHITECTURE.md, the key under `reaper query` answers and the block `reaper rules`
+prints for an agent's CLAUDE.md / AGENTS.md, so an agent or a person reading any one file learns
+how far to trust it. Keep it in step with resolve.py's rules.
 """
 
 from __future__ import annotations
+
+import os
+import shlex
+from pathlib import Path
 
 CONFIDENCE = {
     "EXTRACTED": "proven by the code: an import, a definition in scope, self.method in the class, "
@@ -25,7 +30,8 @@ EDGE_KINDS = {
 NODE_IDS = ("file: its relative path (app/service.py); symbol: path::Qualified.name "
             "(app/service.py::UserService.create); outside package: ext:<name>")
 LINES = ("an edge's lines are the lines in its source file that make it: the call sites, the "
-         "import line or the class line; contains edges have none")
+         "import line or the class line; contains edges have none. A pair whose lines differ in "
+         "confidence has one edge per confidence, each with only its own lines")
 NO_GUESS = ("a call the graph cannot resolve gets no edge, never a guess by name alone; "
             "`reaper query <repo> callers NAME` lists such call sites under 'not linked'")
 COMPLETENESS = ("for `callers NAME`, every call site written NAME(...) or x.NAME(...) in the parsed "
@@ -72,6 +78,63 @@ def plain(prefix: str = "") -> list[str]:
         f"{prefix}Complete? {COMPLETENESS}.",
         f"{prefix}Node ids: {NODE_IDS}.",
         f"{prefix}Use grep for {GREP_FOR}."]
+
+
+# The trust rule of the token study: with it in their instructions, agents stopped re-checking
+# graph answers with grep (-22% input tokens, -36% turns, same accuracy on physicsnemo).
+TRUST_RULES = [
+    "EXTRACTED results are proven by the code. Use them as they are; do not re-check them with "
+    "grep.",
+    'A `callers` answer that ends with "not linked: none" is complete for the parsed files: no '
+    'other call site uses that name. If it lists "not linked" sites, check only those.',
+    'Use grep only for what the graph does not cover: the "not linked" sites, string literals, '
+    "comments, config files, a function passed as a value or renamed, and files that are not "
+    "parsed (anything but Python, JavaScript, TypeScript).",
+    "When a question needs the code's logic, read the source at the lines the graph gives.",
+    'With `--depth`, "not linked" covers only the queried name (query a deeper node directly to '
+    "see its list).",
+]
+QUERY_MODES = {
+    "callers": 'who calls a function, method or class, with the call-site lines and the '
+               '"not linked" sites',
+    "callees": "what a function or method calls, with the call-site lines",
+    "subclasses": "the classes that inherit from a class",
+    "deps": "what a file imports and which files import it, with the import lines",
+}
+QUERY_NAME = ("NAME: a node id (`app/service.py::UserService.create`), a qualified name "
+              "(`UserService.create`), a module name (`app.service`) or a plain name (`create`). "
+              "`--depth N` follows N hops; `--budget TOKENS` caps the text (default 2000); "
+              "`--json` prints everything.")
+
+
+def agent_rules(repo: str | os.PathLike, out_dir: str | os.PathLike | None = None) -> str:
+    """The Markdown block `reaper rules` prints for an agent's CLAUDE.md / AGENTS.md: what the
+    graph is and where, how far to trust it, how to query it. Paths are absolute; `--out` is in
+    the commands only when the outputs are not in the default <repo>/.reaper."""
+    from reaper.graph import out_dir as outputs_of  # here: graph.py imports this module
+
+    root = Path(repo).resolve()
+    where = outputs_of(root, out_dir).resolve()
+    opt = f" --out {shlex.quote(str(where))}" if where != outputs_of(root).resolve() else ""
+    repo_arg = shlex.quote(str(root))
+    return "\n".join([
+        "## Code graph (repo-reaper)",
+        "",
+        f"`{root}` is mapped into a graph of its files, classes, functions and methods and the "
+        f"imports, calls and inheritance between them; the outputs are in `{where}` (graph.json, "
+        "TREE.txt, SUMMARY.md, graph.html).",
+        "",
+        "### How far to trust the graph",
+        *[f"- {rule}" for rule in TRUST_RULES],
+        f"- The graph reflects the code at the last `reaper run`, so run it again after editing "
+        f"files: `reaper run {repo_arg}{opt}`.",
+        "",
+        "### How to query",
+        f"`reaper query {repo_arg}{opt} MODE NAME [--depth N] [--budget TOKENS] [--json]`",
+        *[f"- `{mode}`: {text}." for mode, text in QUERY_MODES.items()],
+        "",
+        QUERY_NAME,
+    ]) + "\n"
 
 
 def query_key(mode: str) -> list[str]:
