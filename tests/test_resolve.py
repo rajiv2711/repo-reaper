@@ -158,7 +158,7 @@ def test_aliases_reexports_star_imports_and_scopes(tmp_path):
 def test_last_name_matching(tmp_path):
     g = mini_repo(tmp_path, {
         "amb/a.py": (
-            "from pathlib import Path\n"
+            "from amb.b import B\n"
             "\n"
             "class A:\n"
             "    def save(self):\n"
@@ -166,26 +166,26 @@ def test_last_name_matching(tmp_path):
             "\n"
             "    def go(self, other):\n"
             "        self.save()\n"         # own method: EXTRACTED
-            "        other.save()\n"        # A.save + B.save: AMBIGUOUS each (A.save upgraded to EXTRACTED)
-            "        save()\n"              # bare name never means a method: no edge
-            "        other.ping()\n"        # 6 candidates: no edge
-            "        lonely()\n"           # 1 candidate, no import: INFERRED
+            "        other.save()\n"        # A.save + B.save, both visible here: AMBIGUOUS each
+            "        save()\n"              # (A.save upgraded to EXTRACTED); bare name never means a method
+            "        other.ping()\n"        # C0..C5.ping, but c.py is not imported here: no edge
+            "        other.shout()\n"       # B.shout, the only visible shout: INFERRED
             "\n"
             "    def misc(self, other):\n"
-            "        other.lonely()\n"     # dotted name never means a top-level function: no edge
-            "        Path().save()\n"),    # receiver built by an import from outside the repo: no edge
+            "        lonely()\n"            # Python: not defined here, not imported -> a local variable
+            "        other.append(1)\n"),   # a list method on a receiver of unknown type: no edge
         "amb/b.py": (
             "class B:\n"
             "    def save(self):\n"
             "        pass\n"
             "\n"
-            "def lonely():\n"
-            "    pass\n"),
+            "    def shout(self):\n"
+            "        pass\n"),
         "amb/c.py": "".join(f"class C{i}:\n    def ping(self):\n        pass\n" for i in range(6)),
     })
     calls = {t for t in as_tuples(g["edges"]) if t[2] == "calls"}
     assert calls == {
         ("amb/a.py::A.go", "amb/a.py::A.save", "calls", E),
         ("amb/a.py::A.go", "amb/b.py::B.save", "calls", A),
-        ("amb/a.py::A.go", "amb/b.py::lonely", "calls", I),
+        ("amb/a.py::A.go", "amb/b.py::B.shout", "calls", I),
     }

@@ -69,8 +69,8 @@ MUTATED_EDGES = {
     (f"{S}::UserService.create", f"{U}::normalize", "calls", E),
     (f"{S}::UserService.create", f"{S}::UserService.log", "calls", E),
     (f"{S}::UserService.create", f"{M}::User.label", "calls", I),
-    # unchanged service.py, new target: self.repo.save now has one candidate, in the added file
-    (f"{S}::UserService.create", f"{ST}::MemoryStore.save", "calls", I),
+    # no edge: self.repo.save in the unchanged service.py. Its only candidate, MemoryStore.save, is in
+    # the added store.py, which service.py never imports: the type of self.repo is unknown, no guess
     (f"{U}::validate", f"{U}::normalize", "calls", E),
     (f"{U}::slugify", f"{U}::normalize", "calls", E),
     (f"{ST}::MemoryStore.save", f"{U}::slugify", "calls", E),
@@ -148,7 +148,7 @@ def test_edit_delete_add_graph(sample_repo):
     assert [n["id"] for n in g["nodes"] if n["kind"] == "external"] == ["ext:os"]
     assert Counter(r["kind"] for r in g["refs"]) == {"import": 7, "call": 22, "inherit": 1}
     assert Counter(e["kind"] for e in g["edges"]) == {
-        "contains": 16, "imports": 6, "inherits": 1, "calls": 12}
+        "contains": 16, "imports": 6, "inherits": 1, "calls": 11}
     got = as_tuples(g["edges"])
     assert len(got) == len(set(got))
     assert set(got) == MUTATED_EDGES
@@ -180,7 +180,7 @@ def test_cli_update(sample_repo, capsys):
     assert main(["update", str(sample_repo)]) == 0
     out = capsys.readouterr().out
     for part in ("1 added", "1 changed", "1 deleted", "4 unchanged",
-                 "22 nodes", "30 refs", "35 edges", "graph.json"):
+                 "22 nodes", "30 refs", "34 edges", "graph.json"):
         assert part in out
     g = json.loads(graph_path(sample_repo).read_text())
     assert ST in g["files"] and R not in g["files"]

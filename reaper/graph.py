@@ -21,7 +21,7 @@ from reaper import extract_js, extract_py
 from reaper.discover import discover
 from reaper.resolve import resolve
 
-VERSION = 1
+VERSION = 2  # 2: edges carry `lines`
 OUT_DIR = ".reaper"
 
 

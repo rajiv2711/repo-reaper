@@ -26,10 +26,10 @@ M, R, S, U = "app/models.py", "app/repository.py", "app/service.py", "app/utils.
 C = f"{S}::UserService.create"
 UNPKG = "https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"
 JSDELIVR = "https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"
-# tests/test_resolve.py::test_last_name_matching, verbatim
+# tests/test_resolve.py::test_last_name_matching, verbatim: 1 EXTRACTED, 1 AMBIGUOUS pair, 1 INFERRED call
 AMB = {
     "amb/a.py": (
-        "from pathlib import Path\n"
+        "from amb.b import B\n"
         "\n"
         "class A:\n"
         "    def save(self):\n"
@@ -40,18 +40,18 @@ AMB = {
         "        other.save()\n"
         "        save()\n"
         "        other.ping()\n"
-        "        lonely()\n"
+        "        other.shout()\n"
         "\n"
         "    def misc(self, other):\n"
-        "        other.lonely()\n"
-        "        Path().save()\n"),
+        "        lonely()\n"
+        "        other.append(1)\n"),
     "amb/b.py": (
         "class B:\n"
         "    def save(self):\n"
         "        pass\n"
         "\n"
-        "def lonely():\n"
-        "    pass\n"),
+        "    def shout(self):\n"
+        "        pass\n"),
     "amb/c.py": "".join(f"class C{i}:\n    def ping(self):\n        pass\n" for i in range(6)),
 }
 MOD = {"m.py": 'def main():\n    pass\n\nif __name__ == "__main__":\n    main()\n'}
