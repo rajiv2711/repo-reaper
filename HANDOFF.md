@@ -1,29 +1,28 @@
 # HANDOFF
-Phase 12 (Tree overview) | status: done (user browser checklist 1-7 all pass, 2026-11-12); Phase 13 next
+Phase 13 (UI/UX polish of graph.html) | status: done (user browser checklist 1-8 all pass, 2026-11-12)
+All 13 phases in AGENTS.md are ticked; no phase is left.
 
 ## Done this session
-- Phase 11 closed: the user's tick and verified summary committed (fbaa0be).
-- Phase 12 built (0bc26e5) and verified: Tree mode closes folders and files with symbols (double-click),
-  edges into a closed one become folder bundles "d:<from> -> <to>", first open auto-closes to the depth
-  that fits TREE_ROWS (60, externals not counted), pick reveals, status ", N closed". User chose (a)
-  collapsible folders over (b) zoom-driven and (c) folder bands, and kept file closing.
-- reaper/templates/graph.html only; graph.json, semantic.json, CLI, Graph mode unchanged.
-- tests/test_html_tree_overview.py (7 new). Docs: docs/phases/12-tree-overview/12-PLAN.md, 12-SUMMARY.md.
+- Phase 12 was already closed (8f24f0d); nothing to do.
+- Phase 13 built and verified (reaper/templates/graph.html only; graph.json, semantic.json, CLI unchanged):
+  toolbar restyled (rounded buttons, Graph|Tree and Hops trays with a blue active pill, focus ring),
+  Re-layout only in Graph (Tree nodes not draggable), one-row status + "file-level view" tag (note as
+  tooltip); LLM groups one row each (<details>); details panel in monospace, empty panel = 10
+  most-connected nodes + key list; keys / g t f Esc and Up/Down/Enter in search; Tree relation edges
+  calm (1 px, 0.3 opacity) until their node is hovered or selected.
+- tests/test_html_polish.py (8 new). Docs: docs/phases/13-ui-polish/13-PLAN.md, 13-SUMMARY.md.
 
 ## Exact next step
-Phase 13 (UI/UX polish of graph.html, docs in docs/phases/13-ui-polish/: 13-PLAN.md and 13-SUMMARY.md).
-Ask the user what to polish before planning (or look at the page in headless Chrome and propose at most
-6 concrete items in one question). Lean: plan <= 40 lines, then build; Graph and Tree modes stay.
+No phase left. The user's next goal (not yet a phase in AGENTS.md): documentation (there is no
+README), repo cleanup and simpler usage. Agree the scope with the user before changing code.
 
 ## Open notes
 - Screenshots: force light/dark with --blink-settings=preferredColorScheme=1/0; one --user-data-dir per run.
-  Helpers (shot.py, build_pages.py, synth.py) in
-  /tmp/claude-1000/-home-keyward-Rajiv-personal-repo-reaper/94798072-2d95-4781-aa48-cec1774b47b0/scratchpad/
-- Phase 12 limits: externals not foldable; closed state not kept on reload or in deep links; one auto
-  depth for the whole tree. Mixed-kind bundles keep #888 in dark (from Phase 11).
-- Not in Phase 13: monorepo workspace packages resolve as external; Phase 10 limits.
+- Known limits: long search result names overflow the sidebar; a repo with one huge folder opens Tree as
+  one closed folder; Tree closed state is not kept on reload; externals are not foldable; monorepo
+  workspace packages resolve as external.
 
 ## Blockers: none
 
 ## Verify
-REAPER_REQUIRE_NODE=1 conda run -n repo-reaper pytest -q   -> 245 passed
+REAPER_REQUIRE_NODE=1 conda run -n repo-reaper pytest -q   -> 253 passed

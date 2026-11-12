@@ -113,7 +113,7 @@ ARCHITECTURE.md marked "LLM-generated".
 - [x] Phase 10 (optional): More languages: JavaScript + TypeScript via the official tree-sitter grammars (user choice over tree-sitter-language-pack, whose 1.x downloads parsers at runtime), same extract contract. Docs in docs/phases/10-more-languages/. (was Phase 8, then Phase 9; renumbered when Phase 8 "Interactive HTML view" and Phase 9 "Tree mode" were inserted)
 - [x] Phase 11: Dark mode for graph.html (docs in docs/phases/11-dark-mode/)
 - [x] Phase 12: Tree overview - see connections against the directory structure at every zoom (docs in docs/phases/12-tree-overview/)
-- [ ] Phase 13: UI/UX polish of graph.html (docs in docs/phases/13-ui-polish/)
+- [x] Phase 13: UI/UX polish of graph.html (docs in docs/phases/13-ui-polish/)
 
 ## Session protocol
 Start: read HANDOFF.md; run `git log --oneline -5` and `conda run -n repo-reaper pytest -q`; say "This session: Phase N". Work on the phase HANDOFF.md marks partial, else the first unchecked phase. Only that 

@@ -37,8 +37,35 @@
   .off { visibility: hidden; }
   .modes button.active { background: #4c78a8; color: #fff; }
   #panel { grid-column: 3; min-height: 0; overflow: auto; padding: 8px 10px; border-left: 1px solid var(--line); }
-  #status { color: var(--muted); }
-  #status.error { color: var(--error); font-weight: bold; }
+  /* Phase 13 toolbar: buttons and select from the chip tokens (light and dark), segmented groups,
+     a keyboard focus ring; the status stays on one row (full text in its tooltip). */
+  #bar button, #bar select, #panel .tabs button { font: 500 13px system-ui, sans-serif; color: var(--fg);
+         background: var(--bg); border: 1px solid var(--chip-line); border-radius: 6px; height: 28px;
+         padding: 0 11px; cursor: pointer; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+         transition: background-color 0.12s, border-color 0.12s, color 0.12s; }
+  #bar select { padding: 0 6px; }
+  #bar button:hover:not(:disabled), #panel .tabs button:hover { background: var(--hover); border-color: var(--faint); }
+  #bar button:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+  #bar button:disabled { opacity: 0.45; cursor: default; }
+  #bar button.active, #panel .tabs button.active { background: #4c78a8; border-color: #4c78a8; color: #fff; }
+  /* segmented control: a tray in the chip colour holding borderless buttons; the active one is a pill */
+  .seg { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--chip-line);
+         border-radius: 8px; background: var(--chip); }
+  .seg .lbl { padding: 0 6px 0 8px; color: var(--muted); }
+  #bar .seg button { height: 24px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent;
+         box-shadow: none; }
+  #bar .seg button:hover:not(:disabled) { background: var(--hover); }
+  #bar .seg button.active { background: #4c78a8; color: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }
+  .acts { display: inline-flex; gap: 6px; }
+  #bar > strong { font-size: 15px; letter-spacing: 0.2px; margin-right: 4px; }
+  #bar input[type=checkbox], #legend input[type=checkbox] { accent-color: #4c78a8; }
+  #llm-toggle { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+  .tag { font-size: 12px; padding: 1px 7px; border: 1px solid var(--chip-line); border-radius: 10px;
+         color: var(--muted); white-space: nowrap; cursor: help; }
+  #status { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+            flex: 1 1 0; }
+  #status.error { color: var(--error); font-weight: bold; white-space: normal; }
   #theme-pick { margin-left: auto; }
   #search { width: 100%; box-sizing: border-box; margin: 4px 0; }
   #results { margin: 0 0 8px; padding-left: 22px; }
@@ -66,7 +93,8 @@
   #results li { margin: 1px 0; }
   #results button.row { display: block; width: 100%; text-align: left; border: 0; background: none;
                         padding: 2px 4px; cursor: pointer; font: inherit; }
-  #results button.row:hover, #results button.row:focus { background: var(--hover); }
+  #results button.row:hover, #results button.row:focus, #results button.row.hl { background: var(--hover); }
+  #results button.row.hl { box-shadow: inset 2px 0 0 var(--link); }
   .row .kind { color: var(--faint); margin-left: 6px; font-size: 12px; }
   .row .rid { display: block; color: var(--faint); font-size: 11px; overflow-wrap: anywhere; }
   .tabs button.active { background: #4c78a8; color: #fff; }
@@ -76,15 +104,32 @@
   .badge[data-conf=AMBIGUOUS] { background: var(--badge-amb); }
   .badge.stale { background: var(--stale); color: var(--stale-fg); }
   #details .meta { color: var(--muted); margin: 2px 0; overflow-wrap: anywhere; }
+  #details h3.title { font-size: 15px; color: var(--fg); margin-top: 6px; }
+  .mono { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .keys { list-style: none; margin: 0; padding: 0; color: var(--muted); }
+  .keys li { margin: 3px 0; }
+  kbd { font: 11px ui-monospace, monospace; padding: 0 4px; border: 1px solid var(--chip-line); border-radius: 3px;
+        background: var(--chip); color: var(--fg); }
   #details .doc { white-space: pre-wrap; margin: 6px 0; }
   .llm-block { border-left: 3px solid #b279a2; background: var(--llm-bg); padding: 2px 8px; margin: 8px 0; }
   .rel { list-style: none; margin: 0; padding: 0; }
-  .rel button { border: 0; background: none; padding: 1px 0; color: var(--link); cursor: pointer; font: inherit;
-                text-align: left; overflow-wrap: anywhere; }
+  .rel button { border: 0; background: none; padding: 1px 0; color: var(--link); cursor: pointer;
+                font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-align: left;
+                overflow-wrap: anywhere; }
+  .rel li { margin: 2px 0; }
   .rel button:hover { text-decoration: underline; }
   body.llm-off .llm { display: none !important; }
-  #legend .grow { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
-  #legend .gsum { color: var(--muted); font-size: 12px; margin: 0 0 2px 16px; }
+  /* Phase 13: one row per LLM group (name cut with an ellipsis); a click opens its summary. */
+  #legend .grow, #legend details.grp > summary { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
+  #legend details.grp > summary { cursor: pointer; list-style: none; }
+  #legend details.grp > summary::-webkit-details-marker { display: none; }
+  #legend details.grp > summary::before { content: "\25B8"; width: 10px; flex: none; color: var(--faint); }
+  #legend details.grp[open] > summary::before { content: "\25BE"; }
+  #legend div.grow { padding-left: 14px; }
+  #legend .sw { flex: none; }
+  #legend .gname { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #legend .grow .count, #legend .grp .count { flex: none; white-space: nowrap; margin-left: 4px; }
+  #legend .gsum { color: var(--muted); font-size: 12px; margin: 2px 0 6px 16px; }
   #arch .item { margin: 6px 0 10px; }
   #arch .item p { margin: 2px 0; }
   .chip { font: 11px ui-monospace, monospace; margin: 2px 4px 0 0; padding: 1px 4px; cursor: pointer;
@@ -96,13 +141,16 @@
 <body>
 <div id="bar">
   <strong>repo-reaper</strong>
-  <span class="modes"><button id="mode-graph" class="active">Graph</button><button id="mode-tree" disabled title="Editor-style tree, left to right">Tree</button></span>
-  <span class="hops">Hops <button data-hops="1" class="active">1</button><button data-hops="2">2</button><button data-hops="3">3</button></span>
-  <button id="clear-focus">Clear focus</button>
-  <button id="fit">Fit</button>
+  <span class="modes seg"><button id="mode-graph" class="active">Graph</button><button id="mode-tree" disabled title="Editor-style tree, left to right (t)">Tree</button></span>
+  <span class="hops seg" title="Focus depth around the selected node"><span class="lbl">Hops</span><button data-hops="1" class="active">1</button><button data-hops="2">2</button><button data-hops="3">3</button></span>
+  <span class="acts">
+  <button id="fit" title="Fit the view (f)">Fit</button>
+  <button id="clear-focus" title="Show everything again (Esc)">Clear focus</button>
   <button id="collapse-all" hidden>Collapse all</button>
-  <button id="relayout">Re-layout</button>
+  <button id="relayout" title="Run the force layout again">Re-layout</button>
+  </span>
   <label id="llm-toggle" hidden><input type="checkbox" checked> LLM layer</label>
+  <span id="lod-note" class="tag" hidden>file-level view</span>
   <span id="status">Loading vis-network 9.1.9 ...</span>
   <label id="theme-pick" title="Colour theme; Auto follows the system setting">Theme <select id="theme"><option value="auto">Auto</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
 </div>
@@ -190,6 +238,15 @@ const TREE_ROWS = 60;  // externals are not counted
 // grey without arrows; imports, calls and inherits (and file-level bundles) bend over the tree.
 const BRANCH_SMOOTH = {enabled: true, type: "cubicBezier", forceDirection: "horizontal"};
 const RELATION_SMOOTH = {enabled: true, type: "curvedCW", roundness: 0.25};
+// Tree mode draws its relations calm (1 px, CALM_OPACITY of their own opacity) so the folder tree stays
+// readable; STRONG keeps each one's own width and opacity for a hovered or selected node (calm()).
+const CALM_OPACITY = 0.3;
+const STRONG = new Map();
+// The panel before anything is picked: the HOME_TOP most-connected nodes and the keys (renderHome).
+const HOME_TOP = 10;
+const KEY_HELP = [["/", "search"], ["↑ ↓ Enter", "move through the results, pick one"],
+                  ["g  t", "Graph, Tree"], ["f", "fit the view"], ["Esc", "clear the focus"],
+                  ["double-click", "Tree: open / close a folder or file; file-level view: expand a file"]];
 // Node styles by kind (Graph mode, Phase 8). Box labels sit inside the box, so they get no halo.
 const GRAPH_GROUPS = {
   file: {color: KIND_COLOR.file, size: 16, shape: "box", font: {color: "#fff", strokeWidth: 0}},
@@ -319,6 +376,8 @@ let net = null, nodes = null, edges = null, nodeView = null, edgeView = null;
 let shown = null, placed = new Set();
 // The tab the panel shows: "details" or "arch".
 let activeTab = "details";
+// The search list as drawn (query, ids, row buttons, highlighted row) and its pending debounce.
+let hits = {q: "", ids: [], rows: [], hl: 0}, searchTimer = null;
 // LLM layer switch (setLLM); Tree mode colours its nodes from it when it is first built.
 let llmOn = true;
 // [swatch element, group index (-1 = no group)] of the group legend, recoloured by applyTheme().
@@ -411,6 +470,27 @@ function bundleEdge(f) {
 function treeEdgeItems() {
   return D.edges.map(e => ({...e, ...(e.kind === "contains" ? branchLook() : {smooth: {...RELATION_SMOOTH}})}))
     .concat(BRANCH_EDGES, D.file_edges.map(bundleEdge));
+}
+
+// A Tree edge as stored in the Tree DataSet: branches (kind contains) as they are; relations, file and
+// folder bundles calm (1 px, CALM_OPACITY x their opacity; dashes kept), their own look kept in STRONG.
+function calm(e) {
+  if (e.kind === "contains") return e;
+  const c = e.color && typeof e.color === "object" ? e.color : {color: e.color};
+  const opacity = c.opacity === undefined ? 1 : c.opacity;
+  STRONG.set(e.id, {width: e.width || 1, opacity});
+  return {...e, color: {color: c.color, opacity: opacity * CALM_OPACITY}, width: 1};
+}
+
+// vis "chosen" of Tree edges: vis selects / hovers a node's edges with the node, and those get their
+// own width and opacity back (STRONG); a selected edge is 1 px wider (vis's own selection look).
+function treeEdgeChosen(values, id, selected, hovering) {
+  const s = STRONG.get(id);
+  if (s) {
+    values.width = s.width;
+    values.opacity = s.opacity;
+  }
+  if (selected) values.width += 1;
 }
 
 // Tree mode sibling order: folders, then files (A-Z by lower-case name, then exact name), then
@@ -853,9 +933,12 @@ function applyHash() {
 function renderDetails(id) {
   const n = byId.get(id);
   const box = document.getElementById("details");
-  const out = [el("h3", "", n.label), el("div", "meta", n.kind + "  " + n.id)];
-  if (n.signature) out.push(el("div", "meta", n.signature));
-  if (n.file) out.push(el("div", "meta", n.file + (n.line !== null && n.line !== undefined ? ":" + n.line : "")));
+  const head = el("div", "meta");
+  head.appendChild(el("span", "", n.kind + "  "));
+  head.appendChild(el("span", "mono", n.id));
+  const out = [el("h3", "title", n.label), head];
+  if (n.signature) out.push(el("div", "meta mono", n.signature));
+  if (n.file) out.push(el("div", "meta mono", n.file + (n.line !== null && n.line !== undefined ? ":" + n.line : "")));
   if (n.doc) out.push(el("div", "doc", n.doc));
   const f = D.sem && D.sem.files ? D.sem.files[fileOf(id)] : null;
   if (f) {
@@ -888,6 +971,87 @@ function renderDetails(id) {
   box.replaceChildren(...out);
 }
 
+// The k nodes with the most imports / inherits / calls edges (n.deg, as SUMMARY.md counts them), ties
+// by id; nodes without such an edge are left out.
+function topNodes(k) {
+  return D.nodes.filter(n => n.deg > 0)
+    .sort((a, b) => b.deg - a.deg || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, k).map(n => n.id);
+}
+
+// The Details tab before anything is picked: a hint, the most-connected nodes (each a button that
+// picks it, with its edge count) and the keys. Plain text only.
+function renderHome() {
+  const out = [el("p", "hint", "Select a node, search, or start from a most-connected node.")];
+  const top = topNodes(HOME_TOP);
+  if (top.length) {
+    out.push(el("h3", "", "Most connected"));
+    const ul = el("ul", "rel");
+    for (const id of top) {
+      const b = el("button", "", id);
+      b.type = "button";
+      b.addEventListener("click", () => pick(id));
+      const li = el("li");
+      li.appendChild(b);
+      li.appendChild(el("span", "badge", byId.get(id).deg));
+      ul.appendChild(li);
+    }
+    out.push(ul);
+  }
+  out.push(el("h3", "", "Keys"));
+  const keys = el("ul", "keys");
+  for (const [k, what] of KEY_HELP) {
+    const li = el("li");
+    li.appendChild(el("kbd", "", k));
+    li.appendChild(el("span", "", " " + what));
+    keys.appendChild(li);
+  }
+  out.push(keys);
+  document.getElementById("details").replaceChildren(...out);
+}
+
+// Page keys, not while typing in a field and not with Ctrl / Alt / Meta: "/" search, g Graph,
+// t Tree, f Fit. Escape clears the focus from anywhere (Phase 8).
+function onKey(ev) {
+  if (ev.key === "Escape") return clearFocus();
+  const tag = ev.target && ev.target.tagName;
+  if (ev.ctrlKey || ev.altKey || ev.metaKey || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  if (ev.key === "/") {
+    ev.preventDefault();
+    const search = document.getElementById("search");
+    search.focus();
+    if (search.select) search.select();
+  } else if (ev.key === "g") {
+    setMode("graph");
+  } else if (ev.key === "t") {
+    setMode("tree");
+  } else if (ev.key === "f") {
+    net.fit();
+  }
+}
+
+// Search box keys: Up / Down move the highlighted result (stops at the ends), Enter picks it; a box
+// changed since the list was drawn (debounce pending) is ranked first and its top result picked.
+function searchKey(ev) {
+  if ((ev.key === "ArrowDown" || ev.key === "ArrowUp") && hits.ids.length) {
+    ev.preventDefault();
+    setHl(Math.max(0, Math.min(hits.ids.length - 1, hits.hl + (ev.key === "ArrowDown" ? 1 : -1))));
+  } else if (ev.key === "Enter") {
+    clearTimeout(searchTimer);
+    const q = document.getElementById("search").value;
+    if (hits.q !== q) renderResults(q);
+    if (hits.ids.length) pick(hits.ids[hits.hl]);
+  }
+}
+
+// Move the result highlight to row i (kept in view).
+function setHl(i) {
+  hits.rows[hits.hl].classList.remove("hl");
+  hits.hl = i;
+  hits.rows[i].classList.add("hl");
+  if (hits.rows[i].scrollIntoView) hits.rows[i].scrollIntoView({block: "nearest"});
+}
+
 // One switch for the whole LLM layer: every .llm element (file summaries, group legend,
 // Architecture tab) and the group colours; off = structural kind colours.
 function setLLM(on) {
@@ -910,24 +1074,33 @@ function renderGroupLegend() {
   if (!rows.length) return;
   const sec = el("div", "llm");
   sec.appendChild(el("h3", "", groupHeading()));
-  const row = (gi, name, count, stale) => {
-    const r = el("div", "grow");
+  // one row: swatch, name (one line; the full name as tooltip), stale, file count
+  const row = (r, gi, name, count, stale) => {
     const sw = el("span", "sw");
     sw.style.background = swatchColour(gi);
     groupSwatches.push([sw, gi]);
     r.appendChild(sw);
-    r.appendChild(el("span", "", name));
+    const label = el("span", "gname", name);
+    label.title = name;
+    r.appendChild(label);
     if (stale) r.appendChild(el("span", "badge stale", "stale"));
     r.appendChild(el("span", "count", count));
     return r;
   };
+  // a group with a summary is a closed <details>: its row is the summary line, a click opens the text
   rows.forEach((g, i) => {
-    sec.appendChild(row(i, g.name,
-                        g.files + (g.files === 1 ? " file" : " files"), g.stale));
-    if (g.summary) sec.appendChild(el("div", "llm gsum", g.summary));
+    const files = g.files + (g.files === 1 ? " file" : " files");
+    if (!g.summary) {
+      sec.appendChild(row(el("div", "grow"), i, g.name, files, g.stale));
+      return;
+    }
+    const box = el("details", "grp");
+    box.appendChild(row(el("summary"), i, g.name, files, g.stale));
+    box.appendChild(el("div", "llm gsum", g.summary));
+    sec.appendChild(box);
   });
   const loose = D.nodes.filter(n => n.kind === "file" && groupIndex(n) < 0).length;
-  if (loose) sec.appendChild(row(-1, "no group", loose + (loose === 1 ? " file" : " files"), false));
+  if (loose) sec.appendChild(row(el("div", "grow"), -1, "no group", loose + (loose === 1 ? " file" : " files"), false));
   document.getElementById("legend").appendChild(sec);
 }
 
@@ -973,6 +1146,7 @@ function renderArch() {
 function renderResults(q) {
   const ids = rank(q);
   const frag = document.createDocumentFragment();
+  const rows = [];
   for (const id of ids) {
     const n = byId.get(id);
     const b = el("button", "row");
@@ -981,12 +1155,15 @@ function renderResults(q) {
     b.appendChild(el("span", "kind", n.kind));
     b.appendChild(el("span", "rid", id));
     b.addEventListener("click", () => pick(id));
+    rows.push(b);
     const li = el("li");
     li.appendChild(b);
     frag.appendChild(li);
   }
   if (!ids.length && String(q).trim()) frag.appendChild(el("li", "hint", "no match"));
   document.getElementById("results").replaceChildren(frag);
+  hits = {q: String(q), ids, rows, hl: 0};
+  if (rows.length) rows[0].classList.add("hl");
   return ids;
 }
 
@@ -1002,7 +1179,7 @@ function renderLegend(V) {
   const shownEdges = CONFS.reduce((sum, k) => sum + c.conf[k], 0);
   const closed = V.closed ? V.closed.size : 0;  // Tree mode: closed folders / files drawn
   setStatus(V.nodes.size + " nodes, " + shownEdges + " edges shown (" + c.lines + " lines)" +
-            (closed ? ", " + closed + " closed (double-click to open)" : "") + (D.note ? " - " + D.note : ""));
+            (closed ? ", " + closed + " closed (double-click to open)" : ""));
 }
 
 // Re-apply state to the network: ring-place the symbols of newly expanded files, remember
@@ -1056,6 +1233,7 @@ function relayout() {
 function setStatus(text, error) {
   const el = document.getElementById("status");
   el.textContent = text;
+  el.title = text;  // the row cuts a long status with an ellipsis
   if (error) el.classList.add("error");
 }
 
@@ -1110,7 +1288,7 @@ function start() {
   // Deep link: an edited hash (or back/forward to one) is applied again.
   window.addEventListener("hashchange", applyHash);
   document.getElementById("clear-focus").addEventListener("click", clearFocus);
-  document.addEventListener("keydown", ev => { if (ev.key === "Escape") clearFocus(); });
+  document.addEventListener("keydown", onKey);
   document.querySelectorAll("#legend input[data-node-kind], #legend input[data-edge-kind], #legend input[data-conf]")
     .forEach(cb => cb.addEventListener("change", () => {
       const d = cb.dataset;
@@ -1125,20 +1303,19 @@ function start() {
   // Canvas click: select + panel + focus, no viewport move (a double-click still lands on the node).
   net.on("click", p => { if (p.nodes.length) pick(p.nodes[0], false); });
   const search = document.getElementById("search");
-  let timer = null;
   search.addEventListener("input", () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => renderResults(search.value), DEBOUNCE_MS);
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => renderResults(search.value), DEBOUNCE_MS);
   });
-  search.addEventListener("keydown", ev => {
-    if (ev.key !== "Enter") return;
-    clearTimeout(timer);
-    const ids = renderResults(search.value);
-    if (ids.length) pick(ids[0]);
-  });
+  search.addEventListener("keydown", searchKey);
   document.getElementById("tab-details").addEventListener("click", () => showTab("details"));
   document.getElementById("tab-arch").addEventListener("click", () => showTab("arch"));
+  renderHome();
   showTab("details");
+  // file-level view: a short tag in the toolbar, the full note (budget, how to expand) as its tooltip
+  const note = document.getElementById("lod-note");
+  note.hidden = !D.note;
+  note.title = D.note || "";
 
   // LLM layer (only with semantic.json): labelled, hideable with one checkbox.
   if (D.sem) {
@@ -1160,6 +1337,7 @@ function start() {
 // stabilization handler always runs while Graph is shown.
 function initModes() {
   const treeButton = document.getElementById("mode-tree");
+  document.getElementById("mode-graph").title = "Graph view (g)";
   treeButton.disabled = true;
   net.once("stabilizationIterationsDone", () => { treeButton.disabled = false; });
   document.getElementById("mode-graph").addEventListener("click", () => setMode("graph"));
@@ -1188,6 +1366,7 @@ function setMode(m) {
   document.getElementById("tree").classList.toggle("off", m !== "tree");
   document.getElementById("mode-graph").classList.toggle("active", m === "graph");
   document.getElementById("mode-tree").classList.toggle("active", m === "tree");
+  document.getElementById("relayout").hidden = m === "tree";  // Tree nodes cannot be dragged away
   const first = m === "tree" && !tnet;
   if (first) startTree();
   net = m === "tree" ? tnet : graphNet;
@@ -1207,7 +1386,7 @@ function setMode(m) {
 // Graph is revealed.
 function startTree() {
   tnodes = new vis.DataSet(treeNodeItems());
-  tedges = new vis.DataSet(treeEdgeItems());
+  tedges = new vis.DataSet(treeEdgeItems().map(calm));
   const focus = state.focus;
   state.focus = null;
   state.closed = autoClosed(applyView());
@@ -1222,10 +1401,11 @@ function startTree() {
   tnet = new vis.Network(document.getElementById("tree"), {nodes: tnodeView, edges: tedgeView}, {
     layout: {improvedLayout: false},
     physics: {enabled: false},
-    edges: {arrows: {to: {enabled: true, scaleFactor: 0.5}}, smooth: false},
+    edges: {arrows: {to: {enabled: true, scaleFactor: 0.5}}, smooth: false, chosen: {edge: treeEdgeChosen}},
     nodes: {shape: "dot", size: 10, font: nodeFont(), chosen: nodeChosen()},
     groups: treeGroups(),
-    interaction: {hover: true, tooltipDelay: 150, hideEdgesOnDrag: D.lod, hideEdgesOnZoom: D.lod}
+    interaction: {hover: true, tooltipDelay: 150, hideEdgesOnDrag: D.lod, hideEdgesOnZoom: D.lod,
+                  dragNodes: false}
   });
   tnet.on("doubleClick", p => {
     if (p.nodes.length && (toggleClosed(p.nodes[0]) !== null || toggleExpand(p.nodes[0]) !== null)) refresh();
@@ -1248,8 +1428,8 @@ function refreshTree() {
   const V = applyView();
   placeTree(V);
   tshown = treeView(V);
-  if (D.lod) tedges.update(D.file_edges.map(f => ({id: f.id, ...bundleStyle(f)})));
-  if (tshown.folds.size) tedges.update([...tshown.folds.values()].map(bundleEdge));
+  if (D.lod) tedges.update(D.file_edges.map(f => calm({id: f.id, ...bundleStyle(f)})));
+  if (tshown.folds.size) tedges.update([...tshown.folds.values()].map(f => calm(bundleEdge(f))));
   tnodeView.refresh();
   tedgeView.refresh();
   renderLegend(tshown);
