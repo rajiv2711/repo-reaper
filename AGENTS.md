@@ -112,7 +112,7 @@ ARCHITECTURE.md marked "LLM-generated".
   Accept: pytest on the generated HTML: Tree mode on the fixture: x grows with depth and y follows the tree order (expected order written by hand from tests/fixtures/sample_py before coding), folder nodes present, branch vs relation edge styles; switching to Tree and back leaves the Graph positions and look unchanged; Phase 5/8 tests unchanged; the user confirms in the browser on this repo and on the 400-module synthetic repo.
 - [x] Phase 10 (optional): More languages: JavaScript + TypeScript via the official tree-sitter grammars (user choice over tree-sitter-language-pack, whose 1.x downloads parsers at runtime), same extract contract. Docs in docs/phases/10-more-languages/. (was Phase 8, then Phase 9; renumbered when Phase 8 "Interactive HTML view" and Phase 9 "Tree mode" were inserted)
 - [x] Phase 11: Dark mode for graph.html (docs in docs/phases/11-dark-mode/)
-- [ ] Phase 12: Tree overview - see connections against the directory structure at every zoom (docs in docs/phases/12-tree-overview/)
+- [x] Phase 12: Tree overview - see connections against the directory structure at every zoom (docs in docs/phases/12-tree-overview/)
 - [ ] Phase 13: UI/UX polish of graph.html (docs in docs/phases/13-ui-polish/)
 
 ## Session protocol

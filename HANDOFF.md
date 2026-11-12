@@ -1,28 +1,27 @@
 # HANDOFF
-Phase 12 (Tree overview) | status: partial (built and tested; waiting for the user's browser checklist)
+Phase 12 (Tree overview) | status: done (user browser checklist 1-7 all pass, 2026-11-12); Phase 13 next
 
 ## Done this session
 - Phase 11 closed: the user's tick and verified summary committed (fbaa0be).
-- Phase 12 decision: (a) collapsible folders (over (b) zoom-driven, (c) folder bands); refined so files
-  with symbols close too and externals do not count in the auto-close budget (12-PLAN.md).
-- reaper/templates/graph.html only: state.closed, standIn, treeView (folder bundles "d:<from> -> <to>"),
-  closable, toggleClosed (double-click), autoClosed (TREE_ROWS 60), reveal on pick, fitIds via stand-ins,
-  closed labels/tooltips, status ", N closed". Graph mode, graph.json, semantic.json, CLI unchanged.
+- Phase 12 built (0bc26e5) and verified: Tree mode closes folders and files with symbols (double-click),
+  edges into a closed one become folder bundles "d:<from> -> <to>", first open auto-closes to the depth
+  that fits TREE_ROWS (60, externals not counted), pick reveals, status ", N closed". User chose (a)
+  collapsible folders over (b) zoom-driven and (c) folder bands, and kept file closing.
+- reaper/templates/graph.html only; graph.json, semantic.json, CLI, Graph mode unchanged.
 - tests/test_html_tree_overview.py (7 new). Docs: docs/phases/12-tree-overview/12-PLAN.md, 12-SUMMARY.md.
-- Headless Chrome, 0 console messages: this repo opens as folders -> files (45 closed); dark pick reveals;
-  synthetic repo opens as "pkg/ (400)".
 
 ## Exact next step
-Get the user's answer on the 7-item browser checklist in 12-SUMMARY.md. All pass -> tick Phase 12 in
-AGENTS.md, set 12-SUMMARY status to verified, commit "Phase 12: ...". A failed item -> fix in Phase 12.
-Then Phase 13 (UI/UX polish): ask the user what to polish before planning.
+Phase 13 (UI/UX polish of graph.html, docs in docs/phases/13-ui-polish/: 13-PLAN.md and 13-SUMMARY.md).
+Ask the user what to polish before planning (or look at the page in headless Chrome and propose at most
+6 concrete items in one question). Lean: plan <= 40 lines, then build; Graph and Tree modes stay.
 
 ## Open notes
 - Screenshots: force light/dark with --blink-settings=preferredColorScheme=1/0; one --user-data-dir per run.
-  Helpers (shot.py, build_pages.py, synth.py) are in this session's scratchpad (see 12-SUMMARY path).
+  Helpers (shot.py, build_pages.py, synth.py) in
+  /tmp/claude-1000/-home-keyward-Rajiv-personal-repo-reaper/94798072-2d95-4781-aa48-cec1774b47b0/scratchpad/
 - Phase 12 limits: externals not foldable; closed state not kept on reload or in deep links; one auto
   depth for the whole tree. Mixed-kind bundles keep #888 in dark (from Phase 11).
-- Not in Phases 12-13: monorepo workspace packages resolve as external; Phase 10 limits.
+- Not in Phase 13: monorepo workspace packages resolve as external; Phase 10 limits.
 
 ## Blockers: none
 

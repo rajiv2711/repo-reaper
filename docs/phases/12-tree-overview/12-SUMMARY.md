@@ -1,6 +1,6 @@
 # Phase 12 SUMMARY: Tree overview (collapsible folders and files)
 
-Status: built and tested; waiting for the user's browser checklist (below) before the tick.
+Status: verified (2026-11-12): the user confirmed the browser checklist below, all pass. Phase 12 ticked.
 
 ## User decision (2026-11-12)
 (a) collapsible folders with bundled edges, over (b) zoom-driven detail and (c) folder bands.
