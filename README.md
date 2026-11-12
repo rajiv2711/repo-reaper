@@ -49,6 +49,7 @@ Then `reaper --version` should print `reaper 0.1.0`.
 reaper run ~/code/myapp                    # graph + TREE.txt, SUMMARY.md, graph.html in ~/code/myapp/.reaper/
 xdg-open ~/code/myapp/.reaper/graph.html   # macOS: open ...
 reaper query ~/code/myapp callers UserService.create
+reaper diff  ~/code/myapp                  # what changed since the last commit; graph.html shows it
 ```
 
 To keep the outputs out of the repository, add `--out DIR`, and pass the same `--out` to every
@@ -57,6 +58,7 @@ later command:
 ```
 reaper run   ~/code/myapp --out ~/reaper-out/myapp
 reaper query ~/code/myapp --out ~/reaper-out/myapp deps app/service.py
+reaper diff  ~/code/myapp --out ~/reaper-out/myapp
 ```
 
 To add the LLM layer, start Ollama (see [LLM layer](#llm-layer-ollama)) and run
@@ -142,20 +144,62 @@ reaper rules ~/code/myapp >> ~/code/myapp/CLAUDE.md
 
 ### diff
 
-To see what an agent (or you) touched before committing:
+To see what an agent (or you) touched in a repository before committing, point `diff` at that
+repository like `run`: its path, and `--out` so the outputs stay out of it.
+
+Expected output: the files it wrote, then every changed file with its changed functions,
+classes and methods, then the links that appeared or disappeared, then a two-line key.
 
 ```
-$ reaper diff .
-changes since HEAD (d53b384, branch main): 30 files: 9 added, 21 modified, 0 deleted
-  M  reaper/cli.py  +39 -1
-       A  cmd_diff  (line 108)
-       M  build_parser  (line 238)
-  A  reaper/diff.py  +254
-  ...
-  M  reaper/resolve.py  +19 -8
-       M  _Resolver._add  (line 173)
-links: 144 new, 6 removed (imports +27, calls +117 -6)
+$ reaper diff ~/code/myapp --out ~/reaper-out/myapp
+/home/you/reaper-out/myapp/TREE.txt
+/home/you/reaper-out/myapp/SUMMARY.md
+/home/you/reaper-out/myapp/graph.html
+changes since HEAD (f8fcf64, branch main): 5 files: 1 added, 3 modified, 1 deleted
+  M  README.md  +1
+  A  app/audit_log.py  +8
+       A  record  (line 5)
+  D  app/legacy.py  -6
+       D  old_name  (line 4)
+  M  app/service.py  +5 -1
+       M  UserService.log  (line 23)
+       A  UserService.audit  (line 28)
+  M  app/utils.py  -5
+       D  data_dir  (line 15)
+links: 3 new, 1 removed (imports +1, calls +2 -1)
+key: A added, M modified, D deleted; a modified symbol has a changed line inside it (a changed method marks the method, not its class)
+links: calls, imports and inherits in the graph now but not in the graph at the base (new), or the other way round (removed); graph.html shows them with Diff on
+$ xdg-open ~/reaper-out/myapp/graph.html
 ```
+
+With nothing changed, the file list and the links line are replaced by one line,
+`no changes since HEAD (f8fcf64, branch main)`.
+
+![Diff layer in Tree mode: added files and functions green, modified amber, deleted ones as red ghosts, new links green, removed links red dashed, the rest grey](docs/images/diff-mode.png)
+
+*graph.html after the command above. It opens in Tree with `app/` open, the changed files open to
+their symbols and the untouched `models.py` and `repository.py` closed. Green: the new
+`audit_log.py` with `record`, and `UserService.audit`. Amber: `service.py`, `utils.py`,
+`UserService.log` and the unparsed `README.md`. Red ghosts: the deleted `legacy.py`, `old_name`
+and `data_dir`. Green links are new (the import of `service.py`, `record` -> `UserService`,
+`UserService.audit` -> `normalize`); the red dashed curve from the closed `repository.py` is its
+call to the deleted `data_dir`. The panel lists the changed files with their line counts.*
+
+- **While an agent works:** run the same command again after each step and reload the page (it
+  does not refresh itself). Each run updates the graph incrementally (physicsnemo, 2,000 Python
+  files, nothing changed: about 4 s).
+- **The repository is only read:** `diff` runs read-only git commands there (`rev-parse`, `ls-tree`,
+  `diff`, `show`). Without `--out` the outputs go to `<repo>/.reaper/`; that folder never counts
+  as a change, but it appears in the repository's own `git status` unless it is ignored.
+- **Another base:** `--base REF` compares with a branch, tag or commit instead of HEAD, e.g.
+  `reaper diff ~/code/myapp --out ~/reaper-out/myapp --base main` for everything that differs
+  from main's latest commit, committed on the branch or not. The path must be in a git work tree;
+  a subfolder works, with paths relative to it as for `run`.
+- **Same `--out` as the other commands:** `diff` writes graph.json, TREE.txt, SUMMARY.md and
+  graph.html there, so `query` with that `--out` answers on the same graph. A later `run` or
+  `export` writes graph.html without the Diff layer; run `diff` again to get it back.
+
+What the marks mean:
 
 - A file is **added** (in the tree now, not at the base; untracked files count, ignored ones do
   not), **modified** or **deleted**.
@@ -167,8 +211,7 @@ links: 144 new, 6 removed (imports +27, calls +117 -6)
 - graph.html opens in Tree with the changes filled (green added, amber modified, red dashed ghost
   for deleted), new links green, removed links red dashed, and everything else grey. Only the
   folders leading to a change and the changed files are open. The **Diff** box in the toolbar
-  switches the layer off; the panel lists the changed files. A later `reaper run` writes the page
-  without the Diff layer.
+  switches the layer off; the panel lists the changed files.
 
 ## Outputs
 

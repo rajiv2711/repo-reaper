@@ -511,6 +511,16 @@ function graphEdgeItem(e) {
   return {id: e.id, color: e.color, width: 1, dashes: e.dashes || false, ...diffEdgeLook(e)};
 }
 
+// A folder bundle as stored: calm, unless (Diff on) it hides new or removed links; then it keeps
+// its Diff look like a single new or removed link does.
+function foldLook(f) {
+  const e = bundleEdge(f);
+  STRONG.delete(e.id);
+  if (!(diffOn && f.diff)) return calm(e);
+  STRONG.set(e.id, {width: e.width, opacity: 1});
+  return e;
+}
+
 // A Tree edge as stored: calm(), or the Diff look of a new or removed link (kept on hover).
 function treeLook(e) {
   const d = diffEdgeLook(e);
@@ -747,6 +757,7 @@ function bundleStyle(f) {
   const d = diffOn && f.diff;  // Diff on: new links make it green, else removed ones red dashed
   if (d && (d.added || d.removed)) {
     look.color = d.added ? DIFF_COLORS.added : DIFF_COLORS.deleted;
+    look.width = Math.max(2, look.width);
     if (!d.added) look.dashes = [4, 4];
     look.title += "; " + (d.added || 0) + " new, " + (d.removed || 0) + " removed since " + D.diff.base;
   }
@@ -1618,7 +1629,7 @@ function refreshTree() {
   placeTree(V);
   tshown = treeView(V);
   if (D.lod) tedges.update(D.file_edges.map(f => calm({id: f.id, ...bundleStyle(f)})));
-  if (tshown.folds.size) tedges.update([...tshown.folds.values()].map(f => calm(bundleEdge(f))));
+  if (tshown.folds.size) tedges.update([...tshown.folds.values()].map(foldLook));
   tnodeView.refresh();
   tedgeView.refresh();
   renderLegend(tshown);

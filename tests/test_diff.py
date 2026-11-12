@@ -370,8 +370,10 @@ def test_js_diff_bundle_shows_a_new_link(changed_repo):
     html = diff_html(changed_repo)
     got = page(html, '(() => { state.closed = new Set(["app/service.py"]); const T = treeView(applyView()); '
                      'const f = T.folds.get("d:app/service.py -> app/utils.py::normalize"); '
-                     'const on = bundleStyle(f).color; diffOn = false; return [f.diff, on, bundleStyle(f).color]; })()')
-    assert got == [{"added": 1}, "#2f8a3a", "#f58518"]
+                     'const on = bundleStyle(f).color, drawn = foldLook(f); diffOn = false; '
+                     'return [f.diff, on, bundleStyle(f).color, [drawn.color, drawn.width], foldLook(f).color]; })()')
+    # drawn at full strength while Diff is on (a plain bundle is calmed to 30% opacity)
+    assert got == [{"added": 1}, "#2f8a3a", "#f58518", ["#2f8a3a", 2], {"color": "#f58518", "opacity": 0.3}]
 
 
 def test_js_diff_change_rows(changed_repo):
