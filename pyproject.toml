@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "repo-reaper"
 version = "0.1.0"
 description = "Map a code repository into a structural + semantic graph."
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["networkx", "tree-sitter>=0.23", "tree-sitter-javascript>=0.23", "tree-sitter-typescript>=0.23"]
 
