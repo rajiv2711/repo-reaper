@@ -29,10 +29,12 @@ tests/fixtures/sample_py, sample_js   small known repos used by the tests
 
 ## Data contract
 Outputs live in `<repo>/.reaper/` or the `--out` dir.
-- graph.json: `meta {version, generated_at}`, `files {path: {lang, sha256, lines}}`,
+- graph.json (format version 2; another version means `update` does a full build):
+  `meta {version, generated_at}`, `files {path: {lang, sha256, lines}}`,
   `nodes [{id, kind, name, file, line, signature, doc}]` (kind file|class|function|method|external),
   `refs [{src, kind, target, alias, file, line}]` (raw, per file; kind import|call|inherit),
-  `edges [{src, dst, kind, confidence}]` (kind contains|imports|calls|inherits).
+  `edges [{src, dst, kind, confidence, lines}]` (kind contains|imports|calls|inherits; `lines` =
+  source lines in src's file that made the edge, absent on contains).
 - Node ids: file = relative path `app/service.py`; symbol = `app/service.py::UserService.create`;
   external = `ext:requests`. Module name of a file: drop `.py`, `/` -> `.`, drop a trailing
   `.__init__`, drop a leading `src.`.
@@ -40,13 +42,22 @@ Outputs live in `<repo>/.reaper/` or the `--out` dir.
   members, input_sha, model}}, architecture: {...}}`. Cache key = sha256(model + prompt version + input).
 
 ## Rules worth knowing before you change something
-- **Call resolution order** (resolve.py):
-  1. `self.x` inside a class: own method (EXTRACTED), else a base-class method (INFERRED).
+- **Precision first.** A wrong edge costs more than a missing one: agents stop trusting the graph
+  and grep everything. Never add a rule that links by name alone; a call that cannot be resolved
+  gets no edge (query lists it as "not linked"). tests/test_resolve_rules.py holds the cases.
+- **Call resolution order** (resolve.py docstring has the details):
+  1. `self.x` inside a class: own method (EXTRACTED), else a base-class method (INFERRED), else that
+     method in subclasses (1 INFERRED, 2-5 AMBIGUOUS), else no edge.
   2. Through the file's import aliases (EXTRACTED). An alias pointing outside the repo gives no edge.
   3. A same-file name (EXTRACTED).
-  4. Builtins give no edge.
-  5. Last name part: 1 candidate INFERRED, 2-5 AMBIGUOUS (one edge each), more gives no edge.
-- **imports** go to the repo file with the longest module-name prefix match, else to `ext:<top package>`.
+  4. Builtins, and `x.m()` where m is a built-in type's method (PY_TYPE_METHODS, JS_PROTO_METHODS),
+     give no edge.
+  5. Last name part, among candidates the file can see (`x.m()`: classes defined, imported or
+     re-exported there and their bases; bare Python names: none; bare JS names: all top-level
+     functions): 1 candidate INFERRED, 2-5 AMBIGUOUS (one edge each), more gives no edge.
+- **imports** go to the repo file with the longest module-name prefix match; a Python import that
+  matches none tries the importing file's own folder (EXTRACTED without `__init__.py`, else
+  INFERRED); otherwise `ext:<top package>`.
 - **LLM calls** (llm.py): POST /api/chat, stream false, `format` = JSON schema, temperature 0,
   one retry on invalid JSON. Never send num_ctx.
 - **enrich**: `--limit` picks the most-connected files first. Groups are Louvain communities

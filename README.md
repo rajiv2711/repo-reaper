@@ -14,15 +14,18 @@ It works in two layers:
   evidence must point at real nodes in the graph.
 
 Every edge has a confidence: **EXTRACTED** means the code proves it, **INFERRED** means one best
-guess by name, and **AMBIGUOUS** means several candidates had the same name. Re-runs are
-incremental: unchanged files are not parsed again, and the LLM is only asked again when its
-input changed.
+guess, and **AMBIGUOUS** means several candidates were equally likely. The graph only guesses
+where the code leaves few options; a call it cannot resolve gets no edge, and `query` lists those
+call sites instead. Re-runs are incremental: unchanged files are not parsed again, and the LLM is
+only asked again when its input changed.
 
 ```
 $ reaper query . callers run_groups
-callers of reaper/enrich.py::run_groups
-  EXTRACTED  reaper/cli.py::_enrich_groups  (line 128)
-  EXTRACTED  tests/test_enrich_groups.py::groups  (line 175)
+callers of reaper/enrich.py::run_groups  (line 301)
+  2 callers: 2 EXTRACTED
+  EXTRACTED  reaper/cli.py::_enrich_groups  (calls at line 129)
+  EXTRACTED  tests/test_enrich_groups.py::groups  (calls at line 178)
+  not linked: none
 ```
 
 ## Install
@@ -72,7 +75,7 @@ The argument `<repo>` is the root of the repository to map. Every command except
 | `reaper map <repo>` | Rebuilds graph.json from scratch. |
 | `reaper update <repo>` | Updates graph.json incrementally and prints the added, changed, deleted and unchanged counts. |
 | `reaper export <repo>` | Writes TREE.txt, SUMMARY.md and graph.html from graph.json. |
-| `reaper query <repo> callers\|callees\|deps NAME [--json]` | Lists one hop around a symbol (callers, callees) or a file (deps: what it imports and who imports it). NAME can be a node id, a qualified name (`UserService.create`), a module name (`app.service`) or a plain name. |
+| `reaper query <repo> callers\|callees\|subclasses\|deps NAME` | Answers one question in one call (see [query](#query)). NAME can be a node id, a qualified name (`UserService.create`), a module name (`app.service`) or a plain name. |
 | `reaper enrich <repo> --pass files\|groups\|architecture` | Runs one LLM pass, then rewrites graph.html so the page shows the new results. |
 
 Options:
@@ -94,6 +97,36 @@ because finished answers are cached.
 | Writes | graph.json, TREE.txt, SUMMARY.md, graph.html | the same, plus semantic.json and ARCHITECTURE.md |
 | graph.html | structure: search, panel, focus, filters | plus group colours, a summary and role for each file, and an Architecture tab |
 
+### query
+
+- `callers` / `callees`: who calls a function, method or class, and what it calls. Each line gives
+  the call sites (`calls at line 851, 932`).
+- `subclasses`: classes that inherit from a class.
+- `deps`: what a file imports and who imports it, with the import lines.
+- `--depth N`: follow N hops (callers of the callers, and so on). Each node is listed once; a
+  repeat says `(see above)`.
+- `--budget TOKENS` (default 2000, about 4 characters per token): the text output stays under it.
+  Nearer hops come first and the space is shared between parents; what does not fit is counted
+  per top-level folder (`... 46 more callers (examples/ 23, test/ 23)`), and the last line names
+  the `--budget` that shows everything.
+- `callers` ends with **not linked**: call sites that use the same name but that the graph could
+  not resolve (the object's type is unknown, or a dynamic import). Those are the only places left
+  to check by hand.
+- `--json` prints everything, never cut.
+
+```
+$ reaper query ~/code/physicsnemo callers _get_checkpoint_filename --depth 2
+callers of physicsnemo/utils/checkpoint.py::_get_checkpoint_filename  (line 570)
+  5 callers: 5 EXTRACTED; hop 2: 129 callers: 129 EXTRACTED
+  EXTRACTED  examples/.../transformer_models/src/gp_utils.py::load_pretrained_model_only  (calls at line 493)
+    EXTRACTED  examples/.../transformer_models/src/plot_embeddings.py::main  (calls at line 295)
+  ...
+  EXTRACTED  physicsnemo/utils/checkpoint.py::save_checkpoint  (calls at line 851, 932)
+    ... 46 more callers (examples/ 23, test/ 23)
+  (120 of 192 lines not shown; --budget 5400 shows all)
+  not linked: none
+```
+
 ## Outputs
 
 All outputs go to `<repo>/.reaper/`, or to the `--out` directory.
@@ -110,16 +143,34 @@ All outputs go to `<repo>/.reaper/`, or to the `--out` directory.
 Each node is `{id, kind, name, file, line, signature, doc}` with kind `file`, `class`, `function`,
 `method` or `external`. The id is the file's relative path (`app/service.py`), the symbol under
 it (`app/service.py::UserService.create`), or `ext:<package>` for something outside the repo.
-Each edge is `{src, dst, kind, confidence}` with kind `contains`, `imports`, `calls` or `inherits`.
+Each edge is `{src, dst, kind, confidence, lines}` with kind `contains`, `imports`, `calls` or
+`inherits`; `lines` are the lines in src's file the edge comes from (call sites, the import, the
+class line) and are absent on `contains` edges.
 
 ### How a call becomes an edge
 
 The rules are tried in this order:
-1. `self.x()` inside a class goes to the class's own method (EXTRACTED), else to a base class's method (INFERRED).
+1. `self.x()` inside a class goes to the class's own method (EXTRACTED), else to a base class's
+   method (INFERRED), else to that method in its subclasses (a hook: 1 is INFERRED, 2 to 5 are
+   AMBIGUOUS). Otherwise there is no edge: `x` comes from a base outside the repo (such as
+   PyTorch's `nn.Module`) or is an attribute.
 2. A name brought in by an import of a repo file is EXTRACTED. A name imported from outside the repo gets no edge.
 3. A name defined in the same file is EXTRACTED.
-4. Builtins get no edge.
-5. Otherwise the call is matched by its last name part across the repo: one candidate is INFERRED, 2 to 5 candidates are AMBIGUOUS (one edge each), and more than 5 get no edge.
+4. Builtins get no edge, and neither does `x.m()` when `m` is a method of a built-in type
+   (`list.append`, `dict.get`, `str.split`; in JS `push`, `map`, `then`...).
+5. What is left is matched by its last name part: one candidate is INFERRED, 2 to 5 are
+   AMBIGUOUS (one edge each), more get no edge. The candidates are limited to what the calling
+   file can see:
+   - `x.m()`: methods of classes defined in the file, imported by it (also through a package's
+     re-exports or an imported module), and their base classes.
+   - a bare `f()`: in Python, a name that is neither defined in the file nor imported can only be
+     a local variable, so there is no edge. In JS and TS it can be a script global, so it is
+     matched against top-level functions and classes.
+
+Imports go to the repo file with the longest matching module name. A Python import that matches
+none is looked up in the importing file's own folder, as Python does for a script
+(`from gp_utils import x` next to `gp_utils.py`): EXTRACTED in a folder without `__init__.py`,
+INFERRED in a package folder.
 
 ## graph.html
 
@@ -183,16 +234,17 @@ reaper run ~/code/big --llm --limit 200             # the 200 most-connected fil
   hashed but not parsed.
 - **Static resolution.** Calls are resolved statically, so dynamic dispatch, `getattr` and
   callbacks are missed or only guessed by name.
-- **Common method names.** Calls like `list.append(...)` can pick up many AMBIGUOUS edges to
-  unrelated `append` methods. On physicsnemo, each of 5 `append` methods gets about 790 such edges
-  and tops the most-connected list.
+- **No type inference yet.** For `x.m()` the graph does not know what `x` is; it only narrows the
+  candidates to classes the file can see. So `m = Mesh(...); m.clean()` is INFERRED rather than
+  EXTRACTED, a call on an object whose class the file never imports gets no edge (`query callers`
+  lists it under "not linked"), and a library method with the same name as a visible repo method
+  (a tensor's `.to()` or `.clone()` next to a repo class that defines them) can still be guessed.
 - **No exclude option.** Only `.gitignore` and a fixed set of folders (`.git node_modules .venv venv
   __pycache__ dist build .reaper`) are skipped, so test fixtures and examples are mapped too.
 - **Monorepos.** Workspace packages resolve as external.
-- **Script-local imports.** An import of a sibling module from a script folder (`from gp_utils
-  import x` in an examples directory) does not resolve, so those calls get no edge.
-- **query** takes one hop and a name. It has no subclass or path query; for those, read
-  graph.json (`inherits` edges).
+- **Dynamic code.** `importlib.import_module(...)`, `getattr`, registries and config files
+  (Hydra `_target_`) give no edges.
+- **sys.path tricks.** Folders added with `sys.path.append(...)` or `PYTHONPATH` are not followed.
 - **Large outputs.** graph.html embeds the whole graph (31 MB for physicsnemo) and TREE.txt grows
   with the number of symbols (1.6 MB for physicsnemo).
 - **graph.html quirks.** Long search results overflow the sidebar. A repo with one huge folder
