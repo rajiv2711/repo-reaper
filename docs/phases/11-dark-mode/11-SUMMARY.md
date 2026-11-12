@@ -1,6 +1,6 @@
 # Phase 11 SUMMARY: dark mode for graph.html
 
-Status: built and tested; waiting for the user's browser checklist (below) before the tick.
+Status: verified (2026-11-12): the user confirmed the browser checklist below, all pass. Phase 11 ticked.
 
 ## User decisions (2026-11-12)
 - Theme select now (Auto / Light / Dark, localStorage key "reaper-theme"), not later.
